@@ -1,5 +1,11 @@
 # aws-platform
 
+![Status](https://img.shields.io/badge/Status-Project%201%20of%2010%20in%20progress-yellow)
+![Cloud](https://img.shields.io/badge/Cloud-AWS-FF9900)
+![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
+![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF)
+![Method](https://img.shields.io/badge/Method-Build%2C%20destroy%2C%20rebuild-4479A1)
+
 A multi-account AWS platform I'm building with Terraform, one project at a time. It starts with a foundation layer: an AWS Organization with a management account and a `lab` account, human access through IAM Identity Center, a shared S3 state backend, org-wide guardrails, and GitHub OIDC trust. Each project after that adds its own stack on top. Every stack has its own state file and can be applied and destroyed on its own, so a project gets built, documented, and torn down, and can be rebuilt from code when a later project needs it.
 
 ## Roadmap
