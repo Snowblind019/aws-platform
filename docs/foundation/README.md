@@ -47,14 +47,41 @@ Once these features are on, the Root access management page in the console only 
 
 ![Lab account has no root credentials](img/s04-lab-root-credentials.png)
 
-`lab` keeps the default `OrganizationAccountAccessRole`, which the management account can assume. It's the way back into `lab` if Identity Center ever breaks.
+### Identity Center
 
-<!-- Phase 2: Identity Center, permission sets, and why no access keys exist. -->
+People get into both accounts through IAM Identity Center, set up as the organization instance in `us-west-2`. MFA is required at every sign-in, not only when the device or location changes. Authenticator apps and security keys are both allowed, and anyone without a registered device has to register one before they can get in.
 
-<!-- S05: ![Identity Center MFA settings](img/s05-identity-center-mfa.png) -->
-<!-- S06: ![Access portal](img/s06-access-portal.png) -->
-<!-- S07: ![SSO profiles verified](img/s07-sso-caller-identity.png) -->
-<!-- S08: ![No active access keys](img/s08-credential-report.png) -->
+![Identity Center MFA settings](img/s05-identity-center-mfa.png)
+
+Access is assigned to a `platform-admins` group, not to my user directly, through three permission sets:
+
+| Permission set | Policy | Session | Account | Used for |
+|---|---|---|---|---|
+| OrgAdmin | AdministratorAccess | 1 hour | Management | Org-level work only, the `org` stack |
+| LabAdmin | AdministratorAccess | 4 hours | `lab` | Terraform work on every other stack |
+| LabReadOnly | ReadOnlyAccess | 8 hours | `lab` | Looking around without write access |
+
+AdministratorAccess is on purpose for now. Least privilege needs something built to be least-privileged against, so project 5 replaces OrgAdmin and LabAdmin with scoped custom permission sets and brings all of this into Terraform. Because access hangs off the group, that change is a matter of changing group assignments, with nothing to rewire per user.
+
+![Permission sets assigned to platform-admins in lab](img/s06a-lab-assignments.png)
+
+![Permission set assigned to platform-admins in the management account](img/s06b-management-assignments.png)
+
+On the command line, one SSO session feeds three profiles, `mgmt-admin`, `lab-admin`, and `lab-readonly`, one per permission set. A single `aws sso login` covers all three, and each profile lands in the right account with the right permission set:
+
+![SSO profiles verified](img/s07-sso-caller-identity.png)
+
+On the work machine, the session gets closed with `aws sso logout` at the end of each shift, which clears the cached tokens.
+
+If Identity Center ever breaks, `lab` keeps the default `OrganizationAccountAccessRole`, which the management account can assume. It's the break-glass way back into `lab`.
+
+### No long-lived keys
+
+Every CLI call now uses short-lived credentials from the SSO session, so the old IAM user's access keys were deleted from the management account and from `~/.aws/credentials`. The credential report in both accounts shows no active access keys, root users included.
+
+![No active access keys in either account](img/s08a-credential-report.png)
+
+![Old IAM user with its access keys deleted](img/s08b-old-user-no-keys.png)
 
 ### Bringing the org under Terraform
 
