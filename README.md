@@ -1,144 +1,34 @@
-# Project 1: AWS Foundation
+# aws-platform
 
-**Status:** In progress
-**Started:** 09-25-2026
-**Finished:**
+A multi-account AWS platform I'm building with Terraform, one project at a time. It starts with a foundation layer: an AWS Organization with a management account and a `lab` account, human access through IAM Identity Center, a shared S3 state backend, org-wide guardrails, and GitHub OIDC trust. Each project after that adds its own stack on top. Every stack has its own state file and can be applied and destroyed on its own, so a project gets built, documented, and torn down, and can be rebuilt from code when a later project needs it.
 
-<!-- One-line summary once built: what this layer gives every other stack. -->
+## Roadmap
 
-## Overview
-
-<!-- One paragraph: what the foundation is, why it exists, and what later stacks get from it. -->
-
-## Architecture
-
-<!-- D2 page 1: ![Account and access diagram](img/d2-account-access.png) -->
-<!-- D2 page 2: ![Credential flow](img/d2-credential-flow.png) -->
-
-## Stacks
-
-| Stack | Account | What it holds | Lifecycle |
+| # | Project | What it adds | Status |
 |---|---|---|---|
-| `bootstrap` | lab | | Persistent |
-| `org` | management | | Persistent |
-| `foundation` | lab | | Persistent |
-| `modules/tags` | n/a | | n/a |
+| 1 | [AWS foundation](docs/foundation/README.md) | Organization and accounts, Identity Center access, state backend with locking, SCPs, org CloudTrail, budgets and tagging, GitHub OIDC trust | In progress |
+| 2 | Multi-VPC network | Transit Gateway, Network Firewall, centralized egress | Planned |
+| 3 | CI/CD pipeline | GitHub Actions deploying the stacks through OIDC federation | Planned |
+| 4 | Container service | A containerized service on ECS Fargate, shipped through the pipeline | Planned |
+| 5 | IAM depth | Least-privilege roles and permission sets for everything built so far | Planned |
+| 6 | Secrets management | Secrets Manager and Parameter Store with rotation, wired into the Fargate tasks | Planned |
+| 7 | Observability and auto-remediation | Monitoring and alerting, with remediation Lambdas | Planned |
+| 8 | Posture and compliance | Security Hub, GuardDuty, Config, and Prowler scans of what projects 1 to 7 built | Planned |
+| 9 | Kubernetes | k3s at home, then EKS | Planned |
+| 10 | Reliability and DR | Snapshot and failover automation, and a failover drill to a second region | Planned |
 
-## Accounts and access
+Progress on the current project: [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1)
 
-<!-- Org layout, the Workloads OU, centralized root access, Identity Center, permission sets, and why no access keys exist. -->
+The conventions every stack follows, and every choice made along the way, are in [docs/decisions.md](docs/decisions.md).
 
-<!-- S02: ![Organization tree](img/s02-org-tree.png) -->
-<!-- S03: ![Centralized root access enabled](img/s03-root-access-features.png) -->
-<!-- S04: ![Lab account has no root credentials](img/s04-lab-root-credentials.png) -->
-<!-- S05: ![Identity Center MFA settings](img/s05-identity-center-mfa.png) -->
-<!-- S06: ![Access portal](img/s06-access-portal.png) -->
-<!-- S07: ![SSO profiles verified](img/s07-sso-caller-identity.png) -->
-<!-- S08: ![No active access keys](img/s08-credential-report.png) -->
+<details>
+<summary><b>How the work is tracked</b></summary>
 
-### Bringing the org under Terraform
+Each project gets a GitHub milestone with one issue per phase of the build. Anything that breaks and takes real work to figure out gets its own bug issue, with the error, the cause, and the fix, and is closed by the commit that fixed it. Those issues become the What broke table in each project's README.
 
-<!-- Why the org and lab account were created by hand, then imported with prevent_destroy. -->
+</details>
 
-<!-- S15: ![Import plan](img/s15-org-import-plan.png) -->
-
-## State backend
-
-<!-- Bucket settings, native S3 locking, the local-to-remote migration, and the lock and prevent_destroy tests. -->
-
-<!-- S09: ![Bootstrap applied with local state](img/s09-bootstrap-local-apply.png) -->
-<!-- S10: ![State migrated to S3](img/s10-migrate-state.png) -->
-<!-- S11: ![State object with versions](img/s11-state-object-versions.png) -->
-<!-- S12: ![State lock conflict](img/s12-lock-error.png) -->
-<!-- S13: ![Lock file in S3](img/s13-tflock-object.png) -->
-<!-- S14: ![prevent_destroy blocking destroy](img/s14-prevent-destroy.png) -->
-
-## Guardrails
-
-### Service control policies
-
-<!-- The three SCPs, what each one blocks, and where they attach. -->
-
-<!-- S16: ![Region lock denial](img/s16-region-lock-deny.png) -->
-<!-- S17: ![Access key creation denied](img/s17-access-key-deny.png) -->
-<!-- S18: ![SCP targets](img/s18-scp-targets.png) -->
-
-### Organization CloudTrail
-
-<!-- Trail settings, where logs land, and why it started in project 1. -->
-
-<!-- S19: ![Organization trail details](img/s19-org-trail-details.png) -->
-<!-- S20: ![Lab account logs in the trail bucket](img/s20-trail-bucket-prefix.png) -->
-
-### Account defaults
-
-<!-- S3 account public access block, EBS encryption by default, IMDSv2 by default, and which regions they cover. -->
-
-## Cost controls
-
-<!-- Budgets, anomaly detection, and cost allocation tags. -->
-
-<!-- S01: ![Billing baseline before project 1](img/s01-billing-baseline.png) -->
-<!-- S21: ![Budgets](img/s21-budgets.png) -->
-<!-- S22: ![Alert email](img/s22-alert-email.png) -->
-<!-- S23: ![Cost allocation tags active](img/s23-cost-allocation-tags.png) -->
-<!-- S24: ![Anomaly monitor](img/s24-anomaly-monitor.png) -->
-<!-- S34: ![Cost Explorer by Project tag](img/s34-cost-explorer-project.png) -->
-
-## GitHub OIDC and the ephemeral check
-
-<!-- The OIDC provider, the read-only role and its trust conditions, and what the scheduled check looks for. -->
-
-<!-- S25: ![GitHub OIDC provider](img/s25-oidc-provider.png) -->
-<!-- S26: ![Role trust policy](img/s26-oidc-trust-policy.png) -->
-<!-- S27: ![Check passing](img/s27-check-green.png) -->
-<!-- S28: ![Check failing on an ephemeral resource](img/s28-check-red.png) -->
-<!-- S29: ![Failure email](img/s29-check-email.png) -->
-<!-- S30: ![Assume role denied from a branch](img/s30-check-denied.png) -->
-
-## Drift and rebuild
-
-<!-- Clean plans, the drift test, and the foundation destroy and re-apply. -->
-
-<!-- S31: ![Clean plans](img/s31-clean-plans.png) -->
-<!-- S32: ![Drift detected](img/s32-drift-plan.png) -->
-<!-- S33: ![Foundation rebuilt](img/s33-foundation-rebuild.png) -->
-
-## Outputs
-
-| Output | Description | Used by |
-|---|---|---|
-| | | |
-
-## Testing the guardrails
-
-<!-- How to reproduce each denial and check yourself, and what the expected result looks like. -->
-
-## Decisions
-
-<!-- The main calls made in this project, linking to entries in ../decisions.md. -->
-
-## What broke
-
-| Problem | Cause | Fix |
-|---|---|---|
-| | | |
-
-## Known gaps
-
-<!-- What a production setup would do differently, and which later project closes each one. -->
-
-## Cost
-
-| Item | Amount |
-|---|---|
-| Standing monthly cost | |
-| Actual spend during the project | |
-
-## Tested with
-
-| Tool | Version |
-|---|---|
-| Terraform | v1.15.9 |
-| AWS provider | |
-| AWS CLI | 2.32.19 |
+<!-- Phase 8: stack table (name, account, purpose, persistent or ephemeral, status) -->
+<!-- Phase 8: the one-direction dependency rule -->
+<!-- Phase 8: how to stand it up from zero, in order (good fit for a collapsed <details> block) -->
+<!-- Phase 8: tested-with versions and standing monthly cost -->
