@@ -33,11 +33,24 @@ Sections fill in as each phase of the build closes. Progress is tracked in the [
 
 ## Accounts and access
 
-<!-- Org layout, the Workloads OU, centralized root access, Identity Center, permission sets, and why no access keys exist. -->
+The organization runs with all features enabled, since consolidated-billing-only mode can't use SCPs, tag policies, or trusted access for other services. It has two accounts. The management account holds only org-level resources, and `lab` is where every project deploys. `lab` sits in a `Workloads` OU under the root, and the guardrail SCPs attach to that OU rather than the root. Member account emails are plus-addresses of the management account's email.
 
-<!-- S02: ![Organization tree](img/s02-org-tree.png) -->
-<!-- S03: ![Centralized root access enabled](img/s03-root-access-features.png) -->
-<!-- S04: ![Lab account has no root credentials](img/s04-lab-root-credentials.png) -->
+The SCP policy type is enabled. AWS attached `FullAWSAccess` to the root, the OU, and both accounts, and it stays attached. The SCPs added later are deny statements on top of it, and detaching it would deny everything.
+
+![Organization tree](img/s02-org-tree.png)
+
+Centralized root access is on, with both of its features: root credentials management and privileged root actions in member accounts. It was turned on before `lab` was created, so `lab` came with no root credentials at all, no password and no access keys. When a task needs root, like unlocking an S3 bucket whose policy denies everyone, the management account opens a short-lived root session into `lab` instead of anyone signing in as its root user.
+
+Once these features are on, the Root access management page in the console only lists the accounts, so the feature check below comes from the CLI.
+
+![Centralized root access enabled](img/s03-root-access-features.png)
+
+![Lab account has no root credentials](img/s04-lab-root-credentials.png)
+
+`lab` keeps the default `OrganizationAccountAccessRole`, which the management account can assume. It's the way back into `lab` if Identity Center ever breaks.
+
+<!-- Phase 2: Identity Center, permission sets, and why no access keys exist. -->
+
 <!-- S05: ![Identity Center MFA settings](img/s05-identity-center-mfa.png) -->
 <!-- S06: ![Access portal](img/s06-access-portal.png) -->
 <!-- S07: ![SSO profiles verified](img/s07-sso-caller-identity.png) -->
@@ -45,7 +58,9 @@ Sections fill in as each phase of the build closes. Progress is tracked in the [
 
 ### Bringing the org under Terraform
 
-<!-- Why the org and lab account were created by hand, then imported with prevent_destroy. -->
+The organization and `lab` were created by hand in the console, not with Terraform. Creating and closing accounts are one-way doors: a closed account sits in a post-closure period, and an organization can only close so many, so an account should never be anywhere near a `terraform destroy`.
+
+<!-- Phase 4: the import, and prevent_destroy so the code describes the org and account without being able to delete them. -->
 
 <!-- S15: ![Import plan](img/s15-org-import-plan.png) -->
 
