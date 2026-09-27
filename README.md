@@ -139,6 +139,6 @@
 
 | Tool | Version |
 |---|---|
-| Terraform | |
+| Terraform | v1.15.9 |
 | AWS provider | |
-| AWS CLI | |
+| AWS CLI | 2.32.19 |
