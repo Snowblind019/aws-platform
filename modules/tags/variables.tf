@@ -30,6 +30,6 @@ variable "ephemeral" {
 variable "owner" {
     type = string
     description = "Who owns the resources; becomes the Owner tag."
-    default = Snowblind019
+    default = "Snowblind019"
   
 }
