@@ -53,3 +53,25 @@ resource "aws_s3_bucket_ownership_controls" "state" {
         object_ownership = "BucketOwnerEnforced"
     }
 }
+
+resource "aws_s3_bucket_lifecycle_configuration" "state" {
+  bucket = aws_s3_bucket.state.id
+
+  depends_on = [ aws_s3_bucket_versioning.state ]
+
+  rule {
+    id = "state-cleanup"
+    status = "Enabled"
+
+    filter {}
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+      newer_noncurrent_versions = 5
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
