@@ -1,30 +1,16 @@
-terraform {
-  required_providers {
-
-    aws = {
-      source = "hashicorp/aws"
-    }
-  }
-}
-
-provider "aws" {
-  region = "us-west-2"
-
-}
-
 variable "project" {
   type        = string
   description = "Name of the stack; becomes the Project tag."
 
   validation {
     condition     = can(regex("^[a-z0-9-]+$", var.project))
-    error_message = "project must use only lowercase letters, digits, and hypens."
+    error_message = "project must use only lowercase letters, digits, and hyphens."
   }
 }
 
 variable "ephemeral" {
   type        = bool
-  description = "Whether this stack is meant to be torn down after use; become the Ephemeral tag."
+  description = "Whether this stack is meant to be torn down after use; becomes the Ephemeral tag."
 }
 
 variable "owner" {
