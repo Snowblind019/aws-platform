@@ -83,7 +83,7 @@ data "aws_iam_policy_document" "state_tls_only" {
 
     principals {
       type        = "*"
-      identifiers = "*"
+      identifiers = ["*"]
     }
 
     actions = ["s3:*"]
