@@ -1,0 +1,9 @@
+# Copy to backend.hcl and fill in the bucket name.
+# backend.hcl is gitignored. Every stack runs:
+#   terraform init -backend-config=../backend.hcl
+# (or ../../backend.hcl from stacks/<name>)
+
+bucket       = "<prefix>-tfstate-<account-id>"
+region       = "us-west-2"
+use_lockfile = true
+encrypt      = true
