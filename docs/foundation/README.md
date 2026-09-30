@@ -93,14 +93,55 @@ The organization and `lab` were created by hand in the console, not with Terrafo
 
 ## State backend
 
-<!-- Bucket settings, native S3 locking, the local-to-remote migration, and the lock and prevent_destroy tests. -->
+Every stack keeps its state in one S3 bucket in `lab`, created by the `bootstrap` stack. Bootstrap is the one stack that can't start with a remote backend, because the bucket it would point at is the thing it creates. So it was applied once with local state, and then its own state was moved into the bucket it had just made.
 
-<!-- S09: ![Bootstrap applied with local state](img/s09-bootstrap-local-apply.png) -->
-<!-- S10: ![State migrated to S3](img/s10-migrate-state.png) -->
-<!-- S11: ![State object with versions](img/s11-state-object-versions.png) -->
-<!-- S12: ![State lock conflict](img/s12-lock-error.png) -->
-<!-- S13: ![Lock file in S3](img/s13-tflock-object.png) -->
-<!-- S14: ![prevent_destroy blocking destroy](img/s14-prevent-destroy.png) -->
+The bucket is named `<prefix>-tfstate-<account-id>`. Bucket names are global, so the account ID keeps it unique, and it's read at plan time with the `aws_caller_identity` data source instead of being typed into the code. The bucket's settings:
+
+| Setting | Value | Why |
+|---|---|---|
+| Versioning | Enabled | Every change to a state file keeps the old copy, so a bad write can be rolled back |
+| Encryption | SSE-S3 | State can hold secrets in plain text. New buckets are encrypted by default, but declaring it shows the intent in code. There's no customer managed key yet |
+| Public access block | All four settings on | The bucket can't be made public by accident |
+| Object ownership | Bucket owner enforced | ACLs are off, so access comes only from IAM and the bucket policy |
+| Bucket policy | Deny every request where `aws:SecureTransport` is false | Nobody can read or write state over plain HTTP |
+| Lifecycle | Old versions expire after 30 days with the newest 5 always kept. Incomplete uploads are aborted after 7 days | Versioning with no lifecycle grows forever |
+| `prevent_destroy` | On | Terraform refuses any plan that would delete the bucket |
+
+Tags come from the shared `modules/tags` module, passed into the provider's `default_tags`, so every resource in the stack carries `Project`, `ManagedBy`, `Owner`, and `Ephemeral` without tagging each one by hand. The module checks that the stack name only uses lowercase letters, digits, and hyphens, and it has no default for `Ephemeral`, so every stack has to say on purpose whether it gets torn down.
+
+![Bootstrap applied with local state](img/s09-bootstrap-local-apply.png)
+
+### Moving the state into the bucket
+
+Stacks use partial backend configuration. The settings every stack shares (the bucket, its region, locking, and encryption) live in a gitignored `backend.hcl` at the repo root, and a committed `backend.hcl.example` shows its shape. Each stack's `backend "s3"` block holds only its own `key`, like `aws-platform/bootstrap/terraform.tfstate`. That keeps the bucket name, and the account ID in it, out of the repo. Backend blocks can't read variables anyway, so a file passed in at `terraform init` is how the settings get shared.
+
+Bootstrap's state moved over with `terraform init -migrate-state -backend-config=../backend.hcl`. A plan afterward showed no changes, which proved Terraform was reading state from S3 and that it matched what was built. Only then were the local state files deleted.
+
+![State migrated to S3](img/s10-migrate-state.png)
+
+![State object with versions](img/s11-state-object-versions.png)
+
+### Locking
+
+Locking uses Terraform's native S3 lockfile (`use_lockfile = true`) instead of a DynamoDB table, which Terraform has deprecated for this. While a plan or apply runs, Terraform writes a `.tflock` object next to the state file, using a conditional write that only succeeds if that object doesn't already exist. When a second run tries, S3 rejects its write with a 412 PreconditionFailed, and Terraform reports it as a lock error.
+
+To test it, one terminal ran `terraform apply -replace=aws_s3_bucket_ownership_controls.state` and left it sitting at the approval prompt. A plain `terraform apply` wouldn't have worked: with nothing to change, it prints No changes and exits without a prompt, so nothing holds the lock. `-replace` forces a plan with one change in it, and the ownership controls are harmless to recreate if the plan gets approved by mistake. While the first terminal waited, `terraform plan` in a second terminal failed with the lock error, showing the lock ID, the operation holding it, and when it was taken.
+
+![State lock conflict](img/s12-lock-error.png)
+
+The lock object sat next to the state file for as long as the first terminal waited. Its timestamp, 11:11:14 local time, is one second after the lock's created time in the error, 18:11:13 UTC. Answering no in the first terminal released the lock, and the object was gone on the next refresh.
+
+![Lock file in S3](img/s13-tflock-object.png)
+
+Because the bucket is versioned, S3 doesn't really delete the lock object when a run finishes. Each run leaves a small noncurrent version and a delete marker behind, and the lifecycle rule keeps those from piling up along with the old state versions.
+
+If a crash ever leaves a lock behind, `terraform force-unlock <LOCK_ID>` removes it, but only after confirming nothing else is actually running. Unlocking while another run is writing state is how state gets corrupted.
+
+### prevent_destroy
+
+`terraform plan -destroy` in bootstrap lists all 7 resources for deletion, then stops with "Instance cannot be destroyed" pointing at the bucket. `prevent_destroy` is checked while the plan is built, so the whole plan fails and none of it can be applied, including the settings resources that aren't protected themselves. Deleting this bucket on purpose would mean moving every stack's state out of it first, removing `prevent_destroy`, and emptying every version before a destroy could run.
+
+![prevent_destroy blocking destroy](img/s14-prevent-destroy.png)
 
 ## Guardrails
 
@@ -192,6 +233,6 @@ Before any project 1 work, the account's month-to-date cost was $0.00, and all o
 
 | Tool | Version |
 |---|---|
-| Terraform | v1.15.9 |
-| AWS provider | |
-| AWS CLI | 2.32.19 |
+| Terraform | v1.16.4 |
+| AWS provider | 6.66.0 |
+| AWS CLI | 2.37.4 |
