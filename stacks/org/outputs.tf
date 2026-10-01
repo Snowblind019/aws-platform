@@ -12,3 +12,10 @@ output "allowed_outputs" {
   description = "Regions the lab account may use; later stacks read this through terraform_remote_state."
   value       = var.allowed_regions
 }
+
+output "region_lock_size" {
+  value = {
+    pretty = length(data.aws_iam_policy_document.region_lock.json)
+    minified = length(data.aws_iam_policy_document.region_lock.minified_json)
+  }
+}
