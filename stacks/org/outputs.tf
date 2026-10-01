@@ -8,14 +8,7 @@ output "lab_account_id" {
   value       = aws_organizations_account.lab.id
 }
 
-output "allowed_outputs" {
+output "allowed_regions" {
   description = "Regions the lab account may use; later stacks read this through terraform_remote_state."
   value       = var.allowed_regions
-}
-
-output "region_lock_size" {
-  value = {
-    pretty = length(data.aws_iam_policy_document.region_lock.json)
-    minified = length(data.aws_iam_policy_document.region_lock.minified_json)
-  }
 }
