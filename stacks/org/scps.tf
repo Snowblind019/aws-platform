@@ -1,5 +1,5 @@
 locals {
-  # NotAction list from the AWS Organizations user guide, SCP general examples, "Deny access to AWS based on the requested AWS Region".
+  #   # NotAction list from the AWS Control Tower controls reference, "Deny access to AWS based on the requested AWS Region".
   # Copied 10-01-2026
 
   region_lock_exempt_actions = [
@@ -118,7 +118,7 @@ data "aws_iam_policy_document" "region_lock" {
 
 data "aws_iam_policy_document" "no_long_lived_keys" {
   statement {
-    sid    = "denyIamUserCredentials"
+    sid    = "DenyIamUserCredentials"
     effect = "Deny"
     actions = [
       "iam:CreateAccessKey",
@@ -131,7 +131,7 @@ data "aws_iam_policy_document" "no_long_lived_keys" {
 locals {
   scps = {
     "deny-leave-org" = {
-      description = "Member accounts cannot leave the organizaton."
+      description = "Member accounts cannot leave the organization."
       content     = data.aws_iam_policy_document.deny_leave_org.minified_json
     }
 
@@ -162,4 +162,3 @@ resource "aws_organizations_policy_attachment" "workloads" {
   policy_id = each.value.id
   target_id = aws_organizations_organizational_unit.workloads.id
 }
-
