@@ -6,6 +6,6 @@ variable "mgmt_profile" {
 
 variable "lab_account_email" {
   type        = string
-  description = "Email on the lab account; must match Organizations exactly. Set in tarraform.tfvars, never in code."
+  description = "Email on the lab account; must match Organizations exactly. Set in terraform.tfvars, never in code."
   sensitive   = true
 }
