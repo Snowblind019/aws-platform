@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars and fill in, terraform.tfvars is gitignored.
+
+lab_account_email = "<your-address>+aws-lab@<your-domain>"
