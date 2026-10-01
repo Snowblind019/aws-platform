@@ -1,14 +1,14 @@
 import {
   to = aws_organizations_organization.this
-  id = "o-fpu8gj9dct"
+  id = "[Redacted]"
 }
 
 import {
   to = aws_organizations_organizational_unit.workloads
-  id = "ou-ljtj-8ge6pip2"
+  id = "[Redacted]"
 }
 
 import {
   to = aws_organizations_account.lab
-  id = "745283154813"
+  id = "[Redacted]"
 }
