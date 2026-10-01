@@ -16,7 +16,7 @@ resource "aws_organizations_organization" "this" {
 }
 
 resource "aws_organizations_organizational_unit" "workloads" {
-  name = "Workloads"
+  name      = "Workloads"
   parent_id = aws_organizations_organization.this.roots[0].id
 
   lifecycle {
@@ -25,13 +25,13 @@ resource "aws_organizations_organizational_unit" "workloads" {
 }
 
 resource "aws_organizations_account" "lab" {
-  name = "lab"
-  email = "var.lab_account_email"
+  name      = "lab"
+  email     = var.lab_account_email
   parent_id = aws_organizations_organizational_unit.workloads.id
   role_name = "OrganizationAccountAccessRole"
 
   lifecycle {
     prevent_destroy = true
-    ignore_changes = [role_name, iam_user_access_to_billing]
+    ignore_changes  = [role_name, iam_user_access_to_billing]
   }
 }
