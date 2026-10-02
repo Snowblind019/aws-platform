@@ -23,3 +23,79 @@ resource "aws_s3_bucket_lifecycle_configuration" "trail_logs" {
     }
   }
 }
+
+data "aws_iam_policy_document" "trail_logs" {
+  statement {
+    sid = "AWSCloudTrailAclCheck20150319"
+    effect = "Allow"
+
+    principals {
+      type = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions = ["S3:GetBucketAcl"]
+    resources = [aws_s3_bucket.trail_logs.arn]
+
+    condition {
+      test = "StringEquals"
+      variable = "aws.SourceArn"
+      values = [local.trail_arn]
+    }
+  }
+
+  statement {
+    sid = "AWSCloudTrailWrite20150319"
+    effect = "Allow"
+
+    principals {
+      type = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.trail_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
+
+    condition {
+      test = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test = "StringEquals"
+      variable = "aws:SourceArn"
+      values = [local.trail_arn]
+    }
+  }
+
+  statement {
+    sid = "AWSCloudTrailOrganizationWrite20150319"
+    effect = "Allow"
+
+    principals {
+      type = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.trail_logs.arn}/AWSLogs/${aws_organizations_organization.this.id}/*"]
+
+    condition {
+      test = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test = "StringEquals"
+      variable = "aws:SourceArn"
+      values = [local.trail_arn]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "trail_logs" {
+    bucket = aws_s3_bucket.trail_logs.id
+    policy = data.aws_iam_policy_document.trail_logs.json
+}
