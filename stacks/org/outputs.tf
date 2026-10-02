@@ -12,3 +12,8 @@ output "allowed_regions" {
   description = "Regions the lab account may use; later stacks read this through terraform_remote_state."
   value       = var.allowed_regions
 }
+
+output "trail_bucket_name" {
+  description = "S3 bucket holding the organization CloudTrail logs."
+  value = aws_s3_bucket.trail_logs.id
+}
