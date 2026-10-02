@@ -4,6 +4,7 @@ resource "aws_organizations_organization" "this" {
   aws_service_access_principals = [
     "iam.amazonaws.com",
     "sso.amazonaws.com",
+    "cloudtrail.amazonaws.com",
   ]
 
   enabled_policy_types = [
