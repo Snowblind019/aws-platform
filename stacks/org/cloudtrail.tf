@@ -99,3 +99,27 @@ resource "aws_s3_bucket_policy" "trail_logs" {
     bucket = aws_s3_bucket.trail_logs.id
     policy = data.aws_iam_policy_document.trail_logs.json
 }
+
+resource "aws_cloudtrail" "org" {
+  name = local.trail_name
+  s3_bucket_name = aws_s3_bucket.trail_logs.id
+
+  is_organization_trail = true
+  is_multi_region_trail = true
+  include_global_service_events = true
+  enable_log_file_validation = true
+
+  event_selector {
+    read_write_type = "All"
+    include_management_events = true
+  }
+
+  depends_on = [ 
+    aws_s3_bucket_policy.trail_logs,
+    aws_organizations_organization.this,
+   ]
+
+   lifecycle {
+     prevent_destroy = true
+   }
+}
