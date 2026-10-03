@@ -20,3 +20,9 @@ variable "allowed_regions" {
     error_message = "allowed_regions must include us-west-2. The state bucket and Identity Center live there."
   }
 }
+
+variable "alert_email" {
+  type        = string
+  description = "Email on which alerts will go to."
+  sensitive   = true
+}
