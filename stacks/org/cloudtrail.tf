@@ -5,6 +5,41 @@ locals {
   trail_arn  = "arn:aws:cloudtrail:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:trail/${local.trail_name}"
 }
 
+resource "aws_s3_bucket" "trail_logs" {
+  bucket = "${local.name_prefix}-org-trail-${data.aws_caller_identity.current.account_id}"
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "trail_logs" {
+  bucket = aws_s3_bucket.trail_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "trail_logs" {
+  bucket = aws_s3_bucket.trail_logs.id
+
+  block_public_acls = true
+  block_public_policy = true
+  ignore_public_acls = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_ownership_controls" "trail_logs" {
+  bucket = aws_s3_bucket.trail_logs.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
+  }
+}
+
 resource "aws_s3_bucket_lifecycle_configuration" "trail_logs" {
   bucket = aws_s3_bucket.trail_logs.id
 
@@ -26,100 +61,100 @@ resource "aws_s3_bucket_lifecycle_configuration" "trail_logs" {
 
 data "aws_iam_policy_document" "trail_logs" {
   statement {
-    sid = "AWSCloudTrailAclCheck20150319"
+    sid    = "AWSCloudTrailAclCheck20150319"
     effect = "Allow"
 
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["cloudtrail.amazonaws.com"]
     }
 
-    actions = ["S3:GetBucketAcl"]
+    actions   = ["S3:GetBucketAcl"]
     resources = [aws_s3_bucket.trail_logs.arn]
 
     condition {
-      test = "StringEquals"
+      test     = "StringEquals"
       variable = "aws.SourceArn"
-      values = [local.trail_arn]
+      values   = [local.trail_arn]
     }
   }
 
   statement {
-    sid = "AWSCloudTrailWrite20150319"
+    sid    = "AWSCloudTrailWrite20150319"
     effect = "Allow"
 
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["cloudtrail.amazonaws.com"]
     }
 
-    actions = ["s3:PutObject"]
+    actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.trail_logs.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
 
     condition {
-      test = "StringEquals"
+      test     = "StringEquals"
       variable = "s3:x-amz-acl"
-      values = ["bucket-owner-full-control"]
+      values   = ["bucket-owner-full-control"]
     }
 
     condition {
-      test = "StringEquals"
+      test     = "StringEquals"
       variable = "aws:SourceArn"
-      values = [local.trail_arn]
+      values   = [local.trail_arn]
     }
   }
 
   statement {
-    sid = "AWSCloudTrailOrganizationWrite20150319"
+    sid    = "AWSCloudTrailOrganizationWrite20150319"
     effect = "Allow"
 
     principals {
-      type = "Service"
+      type        = "Service"
       identifiers = ["cloudtrail.amazonaws.com"]
     }
 
-    actions = ["s3:PutObject"]
+    actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.trail_logs.arn}/AWSLogs/${aws_organizations_organization.this.id}/*"]
 
     condition {
-      test = "StringEquals"
+      test     = "StringEquals"
       variable = "s3:x-amz-acl"
-      values = ["bucket-owner-full-control"]
+      values   = ["bucket-owner-full-control"]
     }
 
     condition {
-      test = "StringEquals"
+      test     = "StringEquals"
       variable = "aws:SourceArn"
-      values = [local.trail_arn]
+      values   = [local.trail_arn]
     }
   }
 }
 
 resource "aws_s3_bucket_policy" "trail_logs" {
-    bucket = aws_s3_bucket.trail_logs.id
-    policy = data.aws_iam_policy_document.trail_logs.json
+  bucket = aws_s3_bucket.trail_logs.id
+  policy = data.aws_iam_policy_document.trail_logs.json
 }
 
 resource "aws_cloudtrail" "org" {
-  name = local.trail_name
+  name           = local.trail_name
   s3_bucket_name = aws_s3_bucket.trail_logs.id
 
-  is_organization_trail = true
-  is_multi_region_trail = true
+  is_organization_trail         = true
+  is_multi_region_trail         = true
   include_global_service_events = true
-  enable_log_file_validation = true
+  enable_log_file_validation    = true
 
   event_selector {
-    read_write_type = "All"
+    read_write_type           = "All"
     include_management_events = true
   }
 
-  depends_on = [ 
+  depends_on = [
     aws_s3_bucket_policy.trail_logs,
     aws_organizations_organization.this,
-   ]
+  ]
 
-   lifecycle {
-     prevent_destroy = true
-   }
+  lifecycle {
+    prevent_destroy = true
+  }
 }
