@@ -26,9 +26,9 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "trail_logs" {
 resource "aws_s3_bucket_public_access_block" "trail_logs" {
   bucket = aws_s3_bucket.trail_logs.id
 
-  block_public_acls = true
-  block_public_policy = true
-  ignore_public_acls = true
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
   restrict_public_buckets = true
 }
 
@@ -61,6 +61,28 @@ resource "aws_s3_bucket_lifecycle_configuration" "trail_logs" {
 
 data "aws_iam_policy_document" "trail_logs" {
   statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    actions = ["S3:*"]
+    resources = [
+      aws_s3_bucket.trail_logs.arn,
+      "${aws_s3_bucket.trail_logs.arn}/*",
+    ]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
+  statement {
     sid    = "AWSCloudTrailAclCheck20150319"
     effect = "Allow"
 
@@ -69,12 +91,12 @@ data "aws_iam_policy_document" "trail_logs" {
       identifiers = ["cloudtrail.amazonaws.com"]
     }
 
-    actions   = ["S3:GetBucketAcl"]
+    actions   = ["s3:GetBucketAcl"]
     resources = [aws_s3_bucket.trail_logs.arn]
 
     condition {
       test     = "StringEquals"
-      variable = "aws.SourceArn"
+      variable = "aws:SourceArn"
       values   = [local.trail_arn]
     }
   }
