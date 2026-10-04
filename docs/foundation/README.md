@@ -27,7 +27,7 @@ Sections fill in as each phase of the build closes. Progress is tracked in the [
 | Stack | Account | What it holds | Lifecycle |
 |---|---|---|---|
 | `bootstrap` | lab | | Persistent |
-| `org` | management | | Persistent |
+| `org` | management | The organization, the `Workloads` OU, and the `lab` account (all imported), three SCPs, the organization CloudTrail trail and its log bucket, budgets, anomaly detection, and cost allocation tags | Persistent |
 | `foundation` | lab | | Persistent |
 | `modules/tags` | n/a | | n/a |
 
@@ -87,9 +87,21 @@ Every CLI call now uses short-lived credentials from the SSO session, so the old
 
 The organization and `lab` were created by hand in the console, not with Terraform. Creating and closing accounts are one-way doors: a closed account sits in a post-closure period, and an organization can only close so many, so an account should never be anywhere near a `terraform destroy`.
 
-<!-- Phase 4: the import, and prevent_destroy so the code describes the org and account without being able to delete them. -->
+They were adopted into the `org` stack afterward. That stack runs against the management account but keeps its state in the bucket in `lab`, so one run uses two sets of credentials. The backend reads and writes state with the `lab-admin` profile from `AWS_PROFILE`. The provider has its own `profile` argument set to `mgmt-admin`, which wins over the environment variable for the provider only. Every resource in the stack is in the management account, so the one-stack-one-account rule still holds. This stack never runs in CI: GitHub never gets a role in the management account, the one account SCPs can't restrict.
 
-<!-- S15: ![Import plan](img/s15-org-import-plan.png) -->
+The organization, the OU, and the account were brought in with `import` blocks. Those go through `plan`, so the plan shows exactly what's being adopted, and whether Terraform wants to change anything, before any of it happens. The final plan read 3 to import, 0 to add, 2 to change, 0 to destroy. Both changes were `default_tags` adding the four standard tags to the OU and the account, plus two Terraform-only settings on the account going from null to false.
+
+Getting there took one fix. The first plan wanted to remove `RESOURCE_CONTROL_POLICY` from the organization's enabled policy types: RCPs were enabled on the root, and the code only listed SCPs. Applying that would have disabled RCPs for the whole organization. The service access principals have the same trap, so that list was copied exactly from `aws organizations list-aws-service-access-for-organization`: IAM for centralized root access and SSO for Identity Center, with CloudTrail added later for the organization trail.
+
+![Import plan, part 1](img/s15a-org-import-plan.png)
+
+![Import plan, part 2](img/s15b-org-import-plan.png)
+
+The account resource needed one more thing. Organizations only uses the break-glass role name when an account is created, and no API reads it back, so after an import Terraform sees a difference on `role_name`, and that attribute forces replacement. `ignore_changes` on `role_name` and `iam_user_access_to_billing` removes the false difference, and `role_name` stays in the code as a record of what exists. The account's email comes from a gitignored `terraform.tfvars` and is marked sensitive, so it never shows in the code or in plan output.
+
+All three resources have `prevent_destroy`. Removing the account resource wouldn't close `lab`, it would pull it out of the organization and out from under every SCP. That safety net got used once for real: on a second machine, `terraform.tfvars` had the `lab` email typed slightly differently. A different email forces replacement, so the plan wanted to destroy `lab` and create a new account, and `prevent_destroy` stopped the plan before anything could be applied. Copying the exact address from `aws organizations list-accounts` fixed it.
+
+The import blocks held the real org, OU, and account IDs. They were deleted right after the apply, before the commit, so they never reached the repo.
 
 ## State backend
 
@@ -147,18 +159,45 @@ If a crash ever leaves a lock behind, `terraform force-unlock <LOCK_ID>` removes
 
 ### Service control policies
 
-<!-- The three SCPs, what each one blocks, and where they attach. -->
+Three SCPs attach to the `Workloads` OU, as deny statements on top of `FullAWSAccess`. SCPs never grant anything. They set the ceiling on what IAM inside `lab` can grant, so even a role with AdministratorAccess can't do what an SCP denies. They don't apply to the management account or to service-linked roles.
 
-<!-- S16: ![Region lock denial](img/s16-region-lock-deny.png) -->
-<!-- S17: ![Access key creation denied](img/s17-access-key-deny.png) -->
-<!-- S18: ![SCP targets](img/s18-scp-targets.png) -->
+| Policy | What it denies | Why |
+|---|---|---|
+| `deny-leave-org` | `organizations:LeaveOrganization` | An account that leaves the org drops every SCP at that moment, so the guardrails could be walked out of from inside |
+| `region-lock` | Every action outside `us-west-2` and `us-east-1`, except a list of global services | Fewer regions means fewer places for mistakes and forgotten resources |
+| `no-long-lived-keys` | `iam:CreateAccessKey` and `iam:CreateLoginProfile` | Humans come in through Identity Center and machines through OIDC, so there's never a reason for an IAM user credential in `lab` |
+
+`region-lock` denies everything with a `NotAction` list that exempts global services like IAM, Organizations, STS, and Route 53, when `aws:RequestedRegion` isn't one of the two allowed regions. The exemption list was copied from the AWS Control Tower controls reference on 10-01-2026 rather than written from memory. The AWS Organizations user guide has an older version of the same example, missing `sso:*`, `tag:GetResources`, and several newer global services. The allowed regions come from one variable that feeds the policy and is also a stack output, so later stacks read the same list the SCP enforces. A validation on that variable requires `us-west-2`, where the state bucket and Identity Center live.
+
+The policies are built with the `aws_iam_policy_document` data source, and each policy's content comes from its `minified_json`. When an SCP is created through the API, whitespace counts toward the size limit. `region-lock` is 2,891 characters pretty and 1,973 minified. The policies and their attachments are created with `for_each` over a map keyed by policy name, so a new SCP is one more map entry and gets attached the same way.
+
+The `org` stack's state lives in `lab`, the account these SCPs govern. If `region-lock` were ever wrong in a way that blocked `lab` from S3 in `us-west-2`, Terraform couldn't read the state it would need to fix it. The way back in is detaching the policy in the Organizations console from the management account, which SCPs never reach. Right after the apply, a plan in `bootstrap` came back with no changes, which confirmed `lab` could still reach its state through the new policies.
+
+A describe call in `eu-west-1` is denied with an explicit deny from a service control policy, and the same call in `us-west-2` works. EC2 calls the error `UnauthorizedOperation` instead of `AccessDenied`.
+
+![Region lock denial](img/s16-region-lock-denied.png)
+
+From `LabAdmin`, which has AdministratorAccess, creating an IAM user works, and creating an access key for it is denied by the SCP. The test user was deleted afterward. `deny-leave-org` isn't tested: leaving would fail anyway because `lab` has no standalone payment method, so the result would prove nothing.
+
+![Access key creation denied](img/s17-access-key-denied.png)
+
+![SCP targets](img/s18-scp-targets.png)
 
 ### Organization CloudTrail
 
-<!-- Trail settings, where logs land, and why it started in project 1. -->
+One organization trail, `org-trail`, records management events from every account in the organization, in every region. It was created in the management account, with `us-west-2` as its home region. It includes global service events, has log file validation on, records both read and write management events, and records no data events, which are billed per event and nothing here needs yet. It started in project 1 because project 5 generates least-privilege policies from CloudTrail history, and the earlier it starts recording, the more history there is.
 
-<!-- S19: ![Organization trail details](img/s19-org-trail-details.png) -->
-<!-- S20: ![Lab account logs in the trail bucket](img/s20-trail-bucket-prefix.png) -->
+Logs land in an S3 bucket in the management account named `<prefix>-org-trail-<account-id>`, under `AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/`. In a real organization this bucket would be in a dedicated log archive account. The bucket gets the same hardening as the state bucket: SSE-S3, all four public access block settings, bucket owner enforced, and a TLS-only deny. It has no versioning. A lifecycle rule expires log objects after 365 days.
+
+The bucket policy lets CloudTrail check the bucket ACL and write log files, with every statement scoped by `aws:SourceArn` to this one trail. CloudTrail is shared by every AWS customer, so without that condition a trail in someone else's account could write into this bucket. CloudTrail checks the bucket policy when the trail is created, so the policy has to exist first and can't read the ARN from the trail. The trail ARN is built in a local from the region, the account ID, and the trail name instead. `depends_on` makes sure the bucket policy exists, and trusted access for CloudTrail is turned on, before the trail is created. Both the trail and its bucket have `prevent_destroy`.
+
+Member accounts can see the organization trail, but they can't stop it, change it, or delete it, so no SCP is needed to protect it.
+
+![Organization trail details](img/s19-org-trail-details.png)
+
+A trail only delivers events that happen after it exists. To test it, a few calls were made in `lab` after the apply, including the denied `eu-west-1` call from the SCP test, which gets logged too. Within minutes `lab` had its own folder under the organization's prefix, with `CloudTrail-Digest/` next to `CloudTrail/`. The digest files are the log file validation working: signed hourly digests that prove later whether a log file was changed or deleted.
+
+![Lab account logs in the trail bucket](img/s20-trail-log-prefix.png)
 
 ### Account defaults
 
@@ -166,16 +205,40 @@ If a crash ever leaves a lock behind, `terraform force-unlock <LOCK_ID>` removes
 
 ## Cost controls
 
-<!-- Budgets, anomaly detection, and cost allocation tags. -->
-
 Before any project 1 work, the account's month-to-date cost was $0.00, and all of August 2026 came to $0.02. That's the baseline the rest of this project is measured against.
 
 ![Billing baseline before project 1](img/s01-billing-baseline.png)
 
-<!-- S21: ![Budgets](img/s21-budgets.png) -->
-<!-- S22: ![Alert email](img/s22-alert-email.png) -->
-<!-- S23: ![Cost allocation tags active](img/s23-cost-allocation-tags.png) -->
-<!-- S24: ![Anomaly monitor](img/s24-anomaly-monitor.png) -->
+Two budgets in the management account cover every account in the organization:
+
+| Budget | Period | Limit | Alerts |
+|---|---|---|---|
+| `daily-leak` | Daily | $3 | Actual spend over 100% |
+| `monthly-ceiling` | Monthly | $25 | Actual spend over 80% and 100%, forecasted spend over 100% |
+
+There's no zero-spend budget. The standing cost is above zero on purpose, so a zero-spend alert would fire every month and train me to ignore alerts. If `daily-leak` fires on a day I didn't work, something was left up overnight. Billing data updates a few times a day, so budgets react within hours, not minutes. The ephemeral check is the faster net.
+
+Alerts go straight to email, with no SNS topic, at a separate plus-address so an inbox rule can sort them. The address comes from a gitignored `terraform.tfvars` and is marked sensitive.
+
+A leftover hand-made $50 budget from before the project was deleted, so the code describes everything in the management account.
+
+![Budgets](img/s21-budgets.png)
+
+<!-- S22, moved to Phase 8: month-to-date spend was under a cent, so the test with monthly-ceiling lowered to $0.01 couldn't fire yet. -->
+<!-- S22: ![Budget alert email](img/s22-budget-alert-email.png) -->
+
+Cost Anomaly Detection runs an AWS services monitor, which learns what normal spend looks like for each service separately and flags spikes. AWS allows only one services monitor per account, so the default one AWS had created was deleted first, and this one was created in code. A daily summary email goes out only for anomalies with $5 or more of total impact. Smaller ones still show in the console.
+
+![Anomaly monitor](img/s24a-anomaly-monitor.png)
+
+![Anomaly alert subscription](img/s24b-anomaly-subscription.png)
+
+The four standard tag keys are active as cost allocation tags, so costs can be grouped by `Project` and the rest. The keys come from the tags module, `keys(module.tags.tags)`, so the module stays the only place the standard is defined. Only the Resource type is activated. The same four keys also show up as Account type, from the tags on the `lab` account itself, and those stay inactive for now. After activation, a backfill was requested so earlier tagged usage shows up in reports too.
+
+![Cost allocation tags active](img/s23-cost-allocation-tags.png)
+
+At first, Cost Explorer denied `OrgAdmin` even with AdministratorAccess. The management account had IAM access to billing information switched off, which keeps every billing page root-only no matter what a role's policies say. Root turned it on once, and billing work now goes through Identity Center like everything else.
+
 <!-- S34: ![Cost Explorer by Project tag](img/s34-cost-explorer-project.png) -->
 
 ## GitHub OIDC and the ephemeral check
@@ -201,7 +264,10 @@ Before any project 1 work, the account's month-to-date cost was $0.00, and all o
 
 | Output | Description | Used by |
 |---|---|---|
-| | | |
+| `allowed_regions` (`org`) | Regions the `lab` account may use, the same list `region-lock` enforces | `foundation`, through `terraform_remote_state` |
+| `organization_id` (`org`) | The organization's ID. Log paths in the CloudTrail bucket start with it | Finding the log folders |
+| `lab_account_id` (`org`) | Account ID of the `lab` member account | Reference |
+| `trail_bucket_name` (`org`) | The S3 bucket holding the organization CloudTrail logs | Finding the logs |
 
 ## Testing the guardrails
 
@@ -215,11 +281,21 @@ Before any project 1 work, the account's month-to-date cost was $0.00, and all o
 
 | Problem | Cause | Fix |
 |---|---|---|
-| | | |
+| The first import plan wanted to disable resource control policies for the whole organization | RCPs were enabled on the root, but `enabled_policy_types` only listed SCPs, and Terraform treats that list as the whole truth | Added `RESOURCE_CONTROL_POLICY` to the list before applying |
+| A plan on a second machine failed with a state lock error | An earlier interrupted `plan` from the same machine left its `.tflock` object behind | Confirmed no other run was active, then `terraform force-unlock` |
+| A plan on a second machine wanted to destroy and replace the `lab` account | That machine's `terraform.tfvars` had the `lab` email typed slightly differently, and a different email forces replacement | `prevent_destroy` stopped the plan. Copied the exact address from `aws organizations list-accounts` |
+| `terraform init` on a second machine failed with `InvalidClientTokenId` | `AWS_PROFILE` wasn't set, so the SDK fell back to the deleted IAM user's keys still sitting in that machine's `~/.aws/credentials` | Removed the old keys and exported `AWS_PROFILE=lab-admin` |
+| Cost Explorer denied `OrgAdmin` despite AdministratorAccess | IAM access to billing information was off in the management account | Root turned it on in the account settings |
 
 ## Known gaps
 
-<!-- What a production setup would do differently, and which later project closes each one. -->
+<!-- Phase 8 finishes this list: what a production setup would do differently, and which later project closes each one. -->
+
+- **No dedicated log archive account.** The CloudTrail bucket lives in the management account. A real organization keeps logs in their own account.
+- **The trail's log bucket has no versioning or Object Lock.** Log file validation can prove a log file was changed or deleted, but it doesn't stop someone with admin in the management account from deleting it.
+- **Trail logs use SSE-S3, not KMS.** Project 8's Security Hub scan will flag it.
+- **The `org` stack's state lives in `lab`, the account its own SCPs govern.** A bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. A separate tooling account for state would remove this. Revisit in projects 3 and 5.
+- **`region-lock` exemptions apply in every region.** Anything on the `NotAction` list, like `kms:*`, still works in regions the policy otherwise denies.
 
 ## Cost
 
