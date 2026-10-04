@@ -75,5 +75,5 @@ resource "aws_ce_cost_allocation_tag" "standard" {
   for_each = toset(keys(module.tags.tags))
 
   tag_key = each.key
-  status = "Active"
+  status  = "Active"
 }
