@@ -10,6 +10,7 @@ resource "aws_organizations_organization" "this" {
   enabled_policy_types = [
     "RESOURCE_CONTROL_POLICY",
     "SERVICE_CONTROL_POLICY",
+    "TAG_POLICY",
   ]
 
   lifecycle {
