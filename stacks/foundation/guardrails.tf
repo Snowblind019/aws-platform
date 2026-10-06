@@ -1,17 +1,18 @@
 resource "aws_s3_account_public_access_block" "this" {
-    block_public_acls = true
-    block_public_policy = true
-    ignore_public_acls = true
-    restrict_public_buckets = true
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 resource "aws_ebs_encryption_by_default" "this" {
-    for_each = toset(local.allowed_regions)
+  for_each = toset(local.allowed_regions)
 
-    region = each.key
-    enabled = true
+  region  = each.key
+  enabled = true
 }
 
 resource "aws_ec2_instance_metadata_defaults" "this" {
-    for_each = toset(local.allowed_regions)
+  for_each    = toset(local.allowed_regions)
+  http_tokens = "required"
 }
