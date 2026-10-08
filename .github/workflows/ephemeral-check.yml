@@ -1,0 +1,86 @@
+name: Ephemeral check
+
+on:
+  schedule:
+    - cron: "17 14 * * *"
+      timezone: "America/Los_Angeles"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+
+jobs:
+  check:
+    name: Check for leftover ephemeral resources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Get AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ secrets.AWS_EPHEMERAL_CHECK_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: ephemeral-check-${{ github.run_id }}
+          role-duration-seconds: 900
+          mask-aws-account-id: true
+          retry-max-attempts: 3
+
+      - name: Count ephemeral and billing resources
+        env:
+          ALLOWED_REGIONS: ${{ vars.AWS_ALLOWED_REGIONS }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ALLOWED_REGIONS" ]; then
+            echo "::error::AWS_ALLOWED_REGIONS is not set, so there is nothing to check."
+            exit 1
+          fi
+
+          total=0
+
+          report() {
+            echo "$1  $2: $3"
+            echo "| $1 | $2 | $3 |" >> "$GITHUB_STEP_SUMMARY"
+            total=$((total + $3))
+          }
+
+          {
+            echo "## Ephemeral check"
+            echo ""
+            echo "| Region | Resource type | Count |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for region in $ALLOWED_REGIONS; do
+            tagged=$(aws resourcegroupstaggingapi get-resources \
+              --region "$region" \
+              --tag-filters Key=Ephemeral,Values=true \
+              --query 'length(ResourceTagMappingList)' \
+              --output json)
+            report "$region" "Tagged Ephemeral=true" "$tagged"
+
+            nat=$(aws ec2 describe-nat-gateways \
+              --region "$region" \
+              --filter Name=state,Values=pending,available \
+              --query 'length(NatGateways)' \
+              --output json)
+            report "$region" "NAT gateways" "$nat"
+
+            eips=$(aws ec2 describe-addresses \
+              --region "$region" \
+              --query 'length(Addresses)' \
+              --output json)
+            report "$region" "Elastic IPs" "$eips"
+          done
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$total" -gt 0 ]; then
+            echo "**$total resource(s) still running.**" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$total ephemeral or billing resource(s) still running in lab. See the job summary."
+            exit 1
+          fi
+
+          echo "**Nothing ephemeral running.**" >> "$GITHUB_STEP_SUMMARY"
+          echo "Nothing ephemeral running."
