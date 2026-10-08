@@ -28,7 +28,7 @@ Sections fill in as each phase of the build closes. Progress is tracked in the [
 |---|---|---|---|
 | `bootstrap` | lab | | Persistent |
 | `org` | management | The organization, the `Workloads` OU, and the `lab` account (all imported), three SCPs, the organization CloudTrail trail and its log bucket, budgets, anomaly detection, and cost allocation tags | Persistent |
-| `foundation` | lab | | Persistent |
+| `foundation` | lab | Account defaults (S3 public access block, EBS encryption by default, IMDSv2 by default), the GitHub OIDC provider, and the read-only `gha-ephemeral-check` role. Reads `allowed_regions` from `org` | Persistent |
 | `modules/tags` | n/a | | n/a |
 
 ## Accounts and access
@@ -201,7 +201,19 @@ A trail only delivers events that happen after it exists. To test it, a few call
 
 ### Account defaults
 
-<!-- S3 account public access block, EBS encryption by default, IMDSv2 by default, and which regions they cover. -->
+The `foundation` stack sets three account-level defaults in `lab`. None of them cost anything, and each one closes a finding the posture scan in project 8 would otherwise report.
+
+| Setting | Scope | What it does |
+|---|---|---|
+| S3 public access block | Whole account | All four settings on. It overrides any bucket's own setting, so no bucket in `lab` can be made public, including by a mistake in a later stack |
+| EBS encryption by default | `us-west-2` and `us-east-1` | Every new volume is encrypted with the AWS managed `aws/ebs` key |
+| IMDSv2 by default | `us-west-2` and `us-east-1` | New instances require session tokens for the metadata service. IMDSv1 is a plain GET, which is how SSRF bugs steal an instance role's credentials |
+
+The two regional settings come from one block each, using the AWS provider's per-resource `region` argument with `for_each` over the allowed regions. Those regions are read from the `org` stack with `terraform_remote_state`, so the guardrails always cover the same list `region-lock` enforces. Adding a region there adds the guardrails here on the next plan.
+
+IMDSv2 is a default, not enforcement. A launch that explicitly asks for IMDSv1 still gets it. The other metadata options are left at no preference, since the hop limit is a per-workload decision.
+
+Destroying `foundation` turns all three off, and the rebuild turns them back on a few minutes later.
 
 ## Cost controls
 
@@ -243,10 +255,30 @@ At first, Cost Explorer denied `OrgAdmin` even with AdministratorAccess. The man
 
 ## GitHub OIDC and the ephemeral check
 
-<!-- The OIDC provider, the read-only role and its trust conditions, and what the scheduled check looks for. -->
+GitHub Actions gets into `lab` through OIDC, with no stored keys. Each workflow run asks GitHub for a signed token that says which repo and branch it came from. AWS checks the token against the IAM OIDC provider for `token.actions.githubusercontent.com`, then the role's trust policy, and hands back credentials that last at most one hour.
 
-<!-- S25: ![GitHub OIDC provider](img/s25-oidc-provider.png) -->
-<!-- S26: ![Role trust policy](img/s26-oidc-trust-policy.png) -->
+The provider accepts the audience `sts.amazonaws.com` and has no thumbprint. For GitHub, AWS checks the certificate against its own trusted CAs and ignores thumbprints, and a thumbprint set and later removed doesn't get cleared. There's one provider per URL per account, so the deploy roles in project 3 will reuse this one. Its ARN is a stack output for that reason.
+
+![GitHub OIDC provider](img/s25-github-oidc-provider.png)
+
+The role, `gha-ephemeral-check`, trusts that provider with two exact-match conditions:
+
+| Condition key | Value |
+|---|---|
+| `token.actions.githubusercontent.com:aud` | `sts.amazonaws.com` |
+| `token.actions.githubusercontent.com:sub` | `repo:Snowblind019@<owner-id>/aws-platform@<repo-id>:ref:refs/heads/main` |
+
+The `sub` check is what keeps every other repository on GitHub out. Any workflow anywhere can ask for a token with the AWS audience, so a trust policy that checks only `aud`, or wildcards `sub`, lets any repo assume the role. Both use `StringEquals` with no wildcards.
+
+The subject uses GitHub's immutable format, with numeric IDs after the owner and repo names. Repos created after July 15, 2026 get this format by default, and this one was created in September, so the older name-only subject in most examples would never match. The IDs are assigned once and never reused, so a renamed or deleted repo's name can't be taken over to get a matching token.
+
+![Role trust policy](img/s26-gha-role-trust-policy.png)
+
+The role can do three things and nothing else: `tag:GetResources`, `ec2:DescribeNatGateways`, and `ec2:DescribeAddresses`, all read-only, in an inline policy. None of them support resource-level permissions, so the resource is `*` and the short action list is where least privilege comes from. `region-lock` already keeps it to the two allowed regions. The IAM policy simulator shows the three actions as allowed and `ec2:DescribeInstances` and `s3:ListAllMyBuckets` as implicit deny. The role has a fixed name, so a rebuild gives it the same ARN, and sessions last at most an hour.
+
+On GitHub, the role ARN is stored as the repository secret `AWS_EPHEMERAL_CHECK_ROLE_ARN`. It isn't a credential, but as a secret it's masked in the public logs, which keeps the account ID out of them. The regions are plain repository variables, `AWS_REGION` and `AWS_ALLOWED_REGIONS`.
+
+<!-- The ephemeral check: what the scheduled workflow looks for, and the three tests. -->
 <!-- S27: ![Check passing](img/s27-check-green.png) -->
 <!-- S28: ![Check failing on an ephemeral resource](img/s28-check-red.png) -->
 <!-- S29: ![Failure email](img/s29-check-email.png) -->
@@ -268,6 +300,11 @@ At first, Cost Explorer denied `OrgAdmin` even with AdministratorAccess. The man
 | `organization_id` (`org`) | The organization's ID. Log paths in the CloudTrail bucket start with it | Finding the log folders |
 | `lab_account_id` (`org`) | Account ID of the `lab` member account | Reference |
 | `trail_bucket_name` (`org`) | The S3 bucket holding the organization CloudTrail logs | Finding the logs |
+| `allowed_regions` (`foundation`) | The same regions, passed through from `org` | Every later regional stack |
+| `github_oidc_provider_arn` (`foundation`) | ARN of the GitHub OIDC provider in `lab` | Project 3's deploy roles |
+| `lab_account_id` (`foundation`) | The `lab` account's ID, from the account the stack runs in | Stacks that build ARNs or bucket names |
+
+Later stacks read `foundation` only, never `org`, and only through its outputs. If a later stack needs something that isn't here, it becomes a new output instead of a data source lookup.
 
 ## Testing the guardrails
 
@@ -296,6 +333,9 @@ At first, Cost Explorer denied `OrgAdmin` even with AdministratorAccess. The man
 - **Trail logs use SSE-S3, not KMS.** Project 8's Security Hub scan will flag it.
 - **The `org` stack's state lives in `lab`, the account its own SCPs govern.** A bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. A separate tooling account for state would remove this. Revisit in projects 3 and 5.
 - **`region-lock` exemptions apply in every region.** Anything on the `NotAction` list, like `kms:*`, still works in regions the policy otherwise denies.
+- **IMDSv2 is the default, not enforced.** An SCP condition on `ec2:MetadataHttpTokens` or an EC2 declarative policy would enforce it. Project 8.
+- **`AWS_ALLOWED_REGIONS` in GitHub is a hand copy of `org`'s list.** If the list changes, the variable has to change with it.
+- **The remote state read gives `foundation` all of `org`'s state.** That includes the two email addresses in plain text. Fine while one principal can read the whole bucket anyway. With separate teams, shared values would go somewhere narrower, like SSM Parameter Store.
 
 ## Cost
 
