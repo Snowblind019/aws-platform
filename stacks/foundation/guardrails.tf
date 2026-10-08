@@ -13,6 +13,8 @@ resource "aws_ebs_encryption_by_default" "this" {
 }
 
 resource "aws_ec2_instance_metadata_defaults" "this" {
-  for_each    = toset(local.allowed_regions)
+  for_each = toset(local.allowed_regions)
+
+  region      = each.key
   http_tokens = "required"
 }
