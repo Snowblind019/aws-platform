@@ -117,3 +117,18 @@ The conventions every stack in this repo follows, then a log of each time I chos
 | 10-07-2026 | `AWS_ALLOWED_REGIONS` copied into GitHub by hand | Managing GitHub settings with Terraform | Not worth a second provider yet. Has to be updated with `org`'s list: known gap |
 | 10-07-2026 | Later stacks read `foundation`'s outputs only. A missing value becomes a new output | Data source lookups from later stacks | One interface, and any change to what's shared shows up in one file |
 | 10-07-2026 | The role ARN is not an output | Outputting it | No stack needs it. The CLI gets it |
+| 10-08-2026 | A failed run is the ephemeral check's alert, and GitHub emails on failure | SES or SNS email sent from the workflow | No extra service to set up or verify, and no extra permissions on the role |
+| 10-08-2026 | The check's logs and job summary show counts only | Listing ARNs or resource IDs | Logs on a public repo are public. A count is enough to know to go look with `lab-readonly` |
+| 10-08-2026 | Checks written as AWS CLI calls inside the workflow | A separate script, or boto3 | The CLI is already on the runner, so there's nothing to install and one file to review. boto3 reps come in projects 5 to 10 |
+| 10-08-2026 | `aws-actions/configure-aws-credentials` pinned to the full commit SHA of v6.3.0, with the version in a comment | `@v6` or `@v6.3.0` | A tag can be moved to point at different code, a SHA can't. This is the action that hands out AWS credentials |
+| 10-08-2026 | The job's only permission is `id-token: write` | The guide's `id-token: write` plus `contents: read` | There's no checkout step, so the job never reads the repo. `contents: read` gets added the day a step needs it |
+| 10-08-2026 | 15-minute session (`role-duration-seconds: 900`) | The default 1 hour | The check takes under a minute. 900 seconds is the shortest STS allows |
+| 10-08-2026 | `mask-aws-account-id: true` | The default, unmasked | Public logs, and account IDs are kept out of everything else |
+| 10-08-2026 | `retry-max-attempts: 3` | The default 12 | A denied assume-role won't pass on a retry, so 12 just makes a denied run hang. 3 still covers a blip |
+| 10-08-2026 | Schedule at 14:17 with `timezone: America/Los_Angeles` | A plain UTC cron, per the guide | GitHub supports an IANA time zone on schedules now, so the run stays before the 15:30 shift all year. Minute 17 keeps it off the top of the hour, when scheduled runs get delayed |
+| 10-08-2026 | Runner pinned to `ubuntu-24.04` | `ubuntu-latest` | `latest` moves to a new image on GitHub's schedule. A pinned image only changes when I change it |
+| 10-08-2026 | Counts use `--output json` | `--output text` | Text output runs `--query` on each page separately, so a paginated result could print two numbers. JSON joins the pages first |
+| 10-08-2026 | The run fails if `AWS_ALLOWED_REGIONS` is empty | Letting the loop run on nothing | An empty variable would check zero regions and go green. Fails closed |
+| 10-08-2026 | NAT gateways and Elastic IPs checked whatever their tags say | Tags only | Hand-made or AWS-made resources may not be tagged, and these two bill by the hour |
+| 10-08-2026 | No `environment:` on the job | Using a GitHub environment | An environment changes the OIDC subject to `...:environment:<name>`, and the trust policy matches `ref:refs/heads/main` only |
+| 10-08-2026 | Red test uses a tagged SSM standard parameter named `/snowblind019/ephemeral-check-test` | A NAT gateway, or a name under `/aws-platform/` | A standard parameter is free and takes one command to create and delete. Parameter Store reserves every name starting with `aws` or `ssm`, so the repo name can't be the first level of the path |
