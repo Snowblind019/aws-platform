@@ -278,11 +278,75 @@ The role can do three things and nothing else: `tag:GetResources`, `ec2:Describe
 
 On GitHub, the role ARN is stored as the repository secret `AWS_EPHEMERAL_CHECK_ROLE_ARN`. It isn't a credential, but as a secret it's masked in the public logs, which keeps the account ID out of them. The regions are plain repository variables, `AWS_REGION` and `AWS_ALLOWED_REGIONS`.
 
-<!-- The ephemeral check: what the scheduled workflow looks for, and the three tests. -->
-<!-- S27: ![Check passing](img/s27-check-green.png) -->
-<!-- S28: ![Check failing on an ephemeral resource](img/s28-check-red.png) -->
-<!-- S29: ![Failure email](img/s29-check-email.png) -->
-<!-- S30: ![Assume role denied from a branch](img/s30-check-denied.png) -->
+### The ephemeral check
+
+`.github/workflows/ephemeral-check.yml` runs every day at 14:17 Pacific, before my shift starts, and can also be started by hand from the Actions tab. It uses the role above to count three things in each allowed region:
+
+| Check | API call | Why |
+|---|---|---|
+| Resources tagged `Ephemeral=true` | `tag:GetResources` | Anything a project marks to be torn down after a session |
+| NAT gateways that are pending or available | `ec2:DescribeNatGateways` | Bills by the hour, so it's counted whatever its tags say |
+| Elastic IPs | `ec2:DescribeAddresses` | Bills by the hour, so it's counted whatever its tags say |
+
+If any count is above zero, the run fails. The failed run is the alert: GitHub emails me, with Actions notifications set to email on failed workflows only, so a green run every day stays quiet. The logs and the job summary show counts only, never ARNs or resource IDs, because logs on a public repo are public. A count is enough to know to go look with `lab-readonly`.
+
+How the workflow is locked down:
+
+- The job's only permission is `id-token: write`, which lets it ask GitHub for an OIDC token. It never checks out the repo, so it doesn't get `contents: read`.
+- `aws-actions/configure-aws-credentials` is pinned to the full commit SHA of v6.3.0. A tag can be moved to point at different code, a SHA can't, and this is the action that hands out the AWS credentials.
+- The session lasts 15 minutes, the shortest STS allows. The check takes under a minute.
+- The account ID is masked in the logs. The action doesn't do that by default.
+- A failed assume-role is retried 3 times instead of the default 12, so a denied run fails fast instead of hanging.
+- If `AWS_ALLOWED_REGIONS` is empty, the run fails. Otherwise it would check zero regions and go green having looked at nothing.
+- The job doesn't use a GitHub environment. An environment changes the token's subject to `...:environment:<name>`, and the trust policy only matches `ref:refs/heads/main`.
+- The runner is pinned to `ubuntu-24.04` instead of `ubuntu-latest`, and the job times out after 10 minutes.
+
+The schedule uses GitHub's `timezone` key set to `America/Los_Angeles`, so the run stays at the same local time through daylight saving instead of moving an hour like a plain UTC cron would. It runs at minute 17 because the top of the hour is when GitHub's scheduler is busiest and runs get delayed. Scheduled runs can still start late, so it's "around 14:17," not exactly.
+
+#### The three tests
+
+**Green.** A manual run on `main` assumed the role and counted 0 for all six checks.
+
+![Check passing](img/s27-ephemeral-check-green.png)
+
+**Red.** A tagged SSM standard parameter, which is free, made the run fail with a count of 1 in `us-west-2`, and the failure email arrived a few minutes later. After the parameter was deleted, the next run went green again.
+
+![Check failing on an ephemeral resource](img/s28-ephemeral-check-red.png)
+
+![Failure email](img/s29-ephemeral-check-failure-email.png)
+
+**Denied.** A manual run from a branch called `test-oidc-deny` used the same workflow file, secret, and role as the green run. The only difference was the branch, which changed the token's subject to `...:ref:refs/heads/test-oidc-deny`. The `sub` condition didn't match, so the credentials step failed with `Not authorized to perform sts:AssumeRoleWithWebIdentity` and the count step never ran. The branch was deleted afterward.
+
+![Assume role denied from a branch](img/s30-oidc-branch-denied.png)
+
+#### Reproducing the red test
+
+```bash
+aws ssm put-parameter \
+  --name /snowblind019/ephemeral-check-test \
+  --type String \
+  --value red-test \
+  --tags Key=Ephemeral,Value=true \
+  --region us-west-2 \
+  --profile lab-admin
+```
+
+Run the workflow on `main` from the Actions tab and it fails with a count of 1. Then delete the parameter:
+
+```bash
+aws ssm delete-parameter \
+  --name /snowblind019/ephemeral-check-test \
+  --region us-west-2 \
+  --profile lab-admin
+```
+
+The next run goes green once the tagging API stops listing the parameter. The name can't start with `aws` or `ssm`: Parameter Store reserves those for AWS's own parameters, including the first level of a path, so `/aws-platform/...` is rejected.
+
+#### Things to know
+
+- GitHub turns off scheduled workflows in public repos after 60 days with no activity in the repo. The Actions tab then shows an Enable workflow button on it.
+- The email for a scheduled run goes to whoever last edited the `cron` line. For a manual run, it goes to whoever started it.
+- The check only covers `lab`. Nothing gets built in the management account, and the role only exists in `lab`.
 
 ## Drift and rebuild
 
@@ -323,6 +387,7 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 | A plan on a second machine wanted to destroy and replace the `lab` account | That machine's `terraform.tfvars` had the `lab` email typed slightly differently, and a different email forces replacement | `prevent_destroy` stopped the plan. Copied the exact address from `aws organizations list-accounts` |
 | `terraform init` on a second machine failed with `InvalidClientTokenId` | `AWS_PROFILE` wasn't set, so the SDK fell back to the deleted IAM user's keys still sitting in that machine's `~/.aws/credentials` | Removed the old keys and exported `AWS_PROFILE=lab-admin` |
 | Cost Explorer denied `OrgAdmin` despite AdministratorAccess | IAM access to billing information was off in the management account | Root turned it on in the account settings |
+| Creating the red test's SSM parameter failed with `AccessDeniedException: No access to reserved parameter name` | The name started with `/aws-platform`. Parameter Store reserves every name that starts with `aws` or `ssm`, in any case, including the first level of a path. A delete using the old name failed the same way, so the renamed parameter was still there | Renamed it to `/snowblind019/ephemeral-check-test` and deleted it with that name |
 
 ## Known gaps
 
@@ -336,6 +401,9 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 - **IMDSv2 is the default, not enforced.** An SCP condition on `ec2:MetadataHttpTokens` or an EC2 declarative policy would enforce it. Project 8.
 - **`AWS_ALLOWED_REGIONS` in GitHub is a hand copy of `org`'s list.** If the list changes, the variable has to change with it.
 - **The remote state read gives `foundation` all of `org`'s state.** That includes the two email addresses in plain text. Fine while one principal can read the whole bucket anyway. With separate teams, shared values would go somewhere narrower, like SSM Parameter Store.
+- **The ephemeral check turns itself off after 60 quiet days.** GitHub disables scheduled workflows in public repos when nothing happens in the repo for 60 days, so a long break stops the check without any warning.
+- **The ephemeral check only sees what it looks for.** It counts resources tagged `Ephemeral=true`, NAT gateways, and Elastic IPs. Something made by hand without tags, like an EC2 instance, wouldn't show up. Later projects add a direct check, and the read permission for it, for anything else that bills while untagged.
+- **The tagging API lags behind deletes.** After the red test, the deleted parameter stayed in `tag:GetResources` results for LAG-TODO. A check run right after a `terraform destroy` can go red for something that's already gone.
 
 ## Cost
 
