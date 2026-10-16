@@ -101,7 +101,7 @@ The account resource needed one more thing. Organizations only uses the break-gl
 
 All three resources have `prevent_destroy`. Removing the account resource wouldn't close `lab`, it would pull it out of the organization and out from under every SCP. That safety net got used once for real: on a second machine, `terraform.tfvars` had the `lab` email typed slightly differently. A different email forces replacement, so the plan wanted to destroy `lab` and create a new account, and `prevent_destroy` stopped the plan before anything could be applied. Copying the exact address from `aws organizations list-accounts` fixed it.
 
-The import blocks held the real org, OU, and account IDs. They were deleted right after the apply, before the commit, so they never reached the repo.
+The import blocks did nothing once the resources were in state, so they were deleted. At first the file was redacted instead of deleted, and it only came out in Phase 7. Its first version, with the real IDs, is still in the commit history. AWS doesn't treat these IDs as secret, so the history was left alone.
 
 ## State backend
 
