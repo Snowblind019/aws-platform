@@ -1,7 +1,7 @@
 module "tags" {
   source = "../../modules/tags"
 
-  project = "org"
+  project   = "org"
   ephemeral = false
 }
 

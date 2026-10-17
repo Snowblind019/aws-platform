@@ -15,5 +15,5 @@ output "allowed_regions" {
 
 output "trail_bucket_name" {
   description = "S3 bucket holding the organization CloudTrail logs."
-  value = aws_s3_bucket.trail_logs.id
+  value       = aws_s3_bucket.trail_logs.id
 }
