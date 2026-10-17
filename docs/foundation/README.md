@@ -350,11 +350,35 @@ The next run goes green once the tagging API stops listing the parameter. The na
 
 ## Drift and rebuild
 
-<!-- Clean plans, the drift test, and the foundation destroy and re-apply. -->
+With all three stacks applied, `terraform plan -detailed-exitcode` returned exit code 0 in each one, meaning the code and AWS match exactly. Exit code 2 means changes are pending and 1 means an error, so a scheduled job can act on the number without reading the output. Before that, two leftovers came out of the `org` stack: the import blocks, and a tag policy file for a stretch item that was skipped.
 
-<!-- S31: ![Clean plans](img/s31-clean-plans.png) -->
-<!-- S32: ![Drift detected](img/s32-drift-plan.png) -->
-<!-- S33: ![Foundation rebuilt](img/s33-foundation-rebuild.png) -->
+![Clean plans in all three stacks](img/s31-clean-plans.png)
+
+To test drift, I added `s3:ListAllMyBuckets` to the `gha-ephemeral-check` role's inline policy by hand in the console. That's the kind of drift that matters: a role quietly getting more access than the code gives it. A refresh-only plan in `foundation` showed the extra permission as a change made outside of Terraform. The normal plan planned to remove it and exited with code 2. One apply put the policy back to its three actions.
+
+![Drift detected](img/s32a-drift-detected.png)
+
+![Plan to revert the drift](img/s32b-drift-plan.png)
+
+The refresh-only plan also listed the OIDC provider and the role. Both showed an empty `tags = {}` that the state had no value for, which isn't a real change. The role also showed the whole inline policy as new, because `aws_iam_role` reads back every inline policy attached to it, while `aws_iam_role_policy` is the resource that owns this one. When two resources can describe the same thing, a refresh reports the drift on both. The normal plan showed only the one real change.
+
+Plan shows what changed, and CloudTrail shows who. Both `PutRolePolicy` calls, my console edit and Terraform's revert, are in the `lab` account's event history under my Identity Center session, about 40 minutes apart. The user agent tells them apart.
+
+![The console change and the revert in CloudTrail](img/s32c-drift-cloudtrail.png)
+
+Plan only checks resources that are already in state. A resource someone creates by hand, outside every stack, never shows up in any plan. That's what the ephemeral check, and AWS Config in project 8, are for.
+
+Then `foundation` was destroyed and built again from code: the three account defaults, the OIDC provider, and the role, 8 resources in all. The destroy took about 16 seconds, most of it the S3 account public access block, and the apply took about 2. The role and the provider have fixed names, so their ARNs came back the same, the outputs matched the ones saved before the destroy, and the ephemeral check went green on the rebuilt role with nothing changed on GitHub. The account defaults were checked directly in both regions after the apply instead of trusting the apply output.
+
+![Foundation destroyed](img/s33a-foundation-destroy.png)
+
+![Foundation applied again](img/s33b-foundation-apply.png)
+
+![Ephemeral check green after the rebuild](img/s33c-check-green-after-rebuild.png)
+
+A rebuilt role has the same name and ARN but a new internal ID. Bucket and key policies that name a role store that ID when they're saved, so they stop matching a recreated role with no error. Nothing names this role that way. Later stacks that put a role from another stack in a resource policy will have to keep this in mind.
+
+`bootstrap` and `org` weren't part of this. They hold the state bucket and the organization itself, and `prevent_destroy` makes `terraform destroy` in either one fail during the plan, before anything is deleted.
 
 ## Outputs
 
@@ -388,6 +412,9 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 | `terraform init` on a second machine failed with `InvalidClientTokenId` | `AWS_PROFILE` wasn't set, so the SDK fell back to the deleted IAM user's keys still sitting in that machine's `~/.aws/credentials` | Removed the old keys and exported `AWS_PROFILE=lab-admin` |
 | Cost Explorer denied `OrgAdmin` despite AdministratorAccess | IAM access to billing information was off in the management account | Root turned it on in the account settings |
 | Creating the red test's SSM parameter failed with `AccessDeniedException: No access to reserved parameter name` | The name started with `/aws-platform`. Parameter Store reserves every name that starts with `aws` or `ssm`, in any case, including the first level of a path. A delete using the old name failed the same way, so the renamed parameter was still there | Renamed it to `/snowblind019/ephemeral-check-test` and deleted it with that name |
+| `org` still held the import blocks and a tag policy file for a skipped stretch item, so its plan wanted to create a tag policy | The import file was redacted instead of deleted, and the tag policy file stayed after the stretch item was dropped. Nothing had run a plan in `org` since | Deleted both files, and the plan showed no changes |
+| `terraform plan` failed with `fork/exec ... terraform-provider-aws ...: permission denied` on the work PC, in two stacks | The downloaded provider binary in the local `.terraform` folder had lost its execute permission, and `terraform init` reused it | Deleted `.terraform` and ran `init` again for a fresh download |
+| The three stacks ran three different AWS provider versions across the two machines | The `.terraform.lock.hcl` files were never committed, so each machine picked its own version | Upgraded all three stacks to the same version and committed the lock files |
 
 ## Known gaps
 
@@ -404,6 +431,7 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 - **The ephemeral check turns itself off after 60 quiet days.** GitHub disables scheduled workflows in public repos when nothing happens in the repo for 60 days, so a long break stops the check without any warning.
 - **The ephemeral check only sees what it looks for.** It counts resources tagged `Ephemeral=true`, NAT gateways, and Elastic IPs. Something made by hand without tags, like an EC2 instance, wouldn't show up. Later projects add a direct check, and the read permission for it, for anything else that bills while untagged.
 - **The tagging API lags behind deletes.** After the red test, the deleted parameter stayed in `tag:GetResources` results for LAG-TODO. A check run right after a `terraform destroy` can go red for something that's already gone.
+- **Drift is only caught when someone runs `plan`.** Nothing runs it on a schedule yet. Project 3's pipeline can run `plan -detailed-exitcode` on a schedule and fail on exit code 2.
 
 ## Cost
 
