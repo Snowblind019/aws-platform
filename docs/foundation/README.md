@@ -1,35 +1,40 @@
 # Project 1: AWS Foundation
 
-![Status](https://img.shields.io/badge/Status-In%20progress-yellow)
+![Status](https://img.shields.io/badge/Status-Done-brightgreen)
 ![Milestone](https://img.shields.io/github/milestones/progress/Snowblind019/aws-platform/1?label=Milestone)
 ![Lifecycle](https://img.shields.io/badge/Lifecycle-Persistent-blue)
 ![AWS](https://img.shields.io/badge/AWS-Organizations%20%7C%20Identity%20Center%20%7C%20S3%20%7C%20CloudTrail-FF9900)
 
-**Status:** In progress\
+**Status:** Done\
 **Started:** 09-25-2026\
-**Finished:**
+**Finished:** 10-21-2026
 
-Sections fill in as each phase of the build closes. Progress is tracked in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
+Built in nine phases, each one tracked as an issue in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
 
-<!-- One-line summary once built: what this layer gives every other stack. -->
+The persistent layer every other stack in this repo builds on: two accounts, short-lived access only, one state backend, org-wide guardrails, and a keyless way in for GitHub Actions. It stays up between projects for under a dollar a month.
 
 ## Overview
 
-<!-- One paragraph: what the foundation is, why it exists, and what later stacks get from it. -->
+Project 1 sets up the AWS side of the platform before anything gets deployed. An AWS Organization holds two accounts: the management account, which only holds org-level things like Identity Center, the audit trail, and the cost controls, and `lab`, where every later project deploys. People get in through IAM Identity Center with MFA, GitHub Actions gets in through OIDC, and neither path uses a stored key. Terraform state for every stack lives in one versioned, locked S3 bucket. On top of that sit the guardrails: three SCPs on the `Workloads` OU, an organization CloudTrail trail, budgets and anomaly alerts, cost allocation tags, safe account defaults in `lab`, and a daily check that fails if anything meant to be temporary is still running. Later stacks get the tags module, the shared backend config, and `foundation`'s outputs, so each project starts from the same base and can be torn down without touching it.
 
 ## Architecture
 
-<!-- D2 page 1: ![Account and access diagram](img/d2-account-access.png) -->
-<!-- D2 page 2: ![Credential flow](img/d2-credential-flow.png) -->
+![Account and access](img/d2-account-access.png)
+
+The management account holds Identity Center, the organization trail and its log bucket, and the cost controls. SCPs never apply to it, so nothing else gets built there. `lab` sits in the `Workloads` OU under all three SCPs and holds everything else: the state bucket, the account defaults, and the GitHub OIDC trust.
+
+![Credential flow](img/d2-credential-flow.png)
+
+Every way into AWS ends in short-lived STS credentials. People sign in through Identity Center and get a permission set's role for 1 to 8 hours. GitHub Actions trades a signed OIDC token for 15 minutes on one read-only role, and only from `main`. No IAM user has an access key in either account, an SCP stops new ones being made in `lab`, and `lab` has no root credentials at all.
 
 ## Stacks
 
 | Stack | Account | What it holds | Lifecycle |
 |---|---|---|---|
-| `bootstrap` | lab | | Persistent |
+| `bootstrap` | lab | The S3 bucket every stack keeps its state in, with versioning, SSE-S3, all four public access block settings, bucket owner enforced, a TLS-only policy, a lifecycle rule, and `prevent_destroy` | Persistent |
 | `org` | management | The organization, the `Workloads` OU, and the `lab` account (all imported), three SCPs, the organization CloudTrail trail and its log bucket, budgets, anomaly detection, and cost allocation tags | Persistent |
 | `foundation` | lab | Account defaults (S3 public access block, EBS encryption by default, IMDSv2 by default), the GitHub OIDC provider, and the read-only `gha-ephemeral-check` role. Reads `allowed_regions` from `org` | Persistent |
-| `modules/tags` | n/a | | n/a |
+| `modules/tags` | n/a | No resources. It outputs the four standard tags, `Project`, `ManagedBy`, `Owner`, and `Ephemeral`, for each stack's `default_tags`, and validates the stack name | n/a |
 
 ## Accounts and access
 
@@ -236,8 +241,9 @@ A leftover hand-made $50 budget from before the project was deleted, so the code
 
 ![Budgets](img/s21-budgets.png)
 
-<!-- S22, moved to Phase 8: month-to-date spend was under a cent, so the test with monthly-ceiling lowered to $0.01 couldn't fire yet. -->
-<!-- S22: ![Budget alert email](img/s22-budget-alert-email.png) -->
+To prove an alert actually reaches me, `monthly-ceiling` was lowered to $0.01 until one came. The first try, in Phase 4, couldn't fire: month-to-date spend was about a quarter of a cent, under even the 80% line on a $0.01 budget. By mid-October spend was $0.09. This time the limit was lowered in the console instead of in the code, so the test value was never in `cost.tf` and couldn't get committed by mistake. The first console edit didn't save, and the budget sat at $25 for a day before `describe-budget` showed it, so the second try was checked from the CLI right after saving. The alert for actual spend over 100% arrived within a day of that. Then `terraform plan` in `org` showed the change as drift, `limit_amount` from `0.01` back to `25`, and one apply put it back.
+
+![Budget alert email](img/s22-budget-alert-email.png)
 
 Cost Anomaly Detection runs an AWS services monitor, which learns what normal spend looks like for each service separately and flags spikes. AWS allows only one services monitor per account, so the default one AWS had created was deleted first, and this one was created in code. A daily summary email goes out only for anomalies with $5 or more of total impact. Smaller ones still show in the console.
 
@@ -251,7 +257,9 @@ The four standard tag keys are active as cost allocation tags, so costs can be g
 
 At first, Cost Explorer denied `OrgAdmin` even with AdministratorAccess. The management account had IAM access to billing information switched off, which keeps every billing page root-only no matter what a role's policies say. Root turned it on once, and billing work now goes through Identity Center like everything else.
 
-<!-- S34: ![Cost Explorer by Project tag](img/s34-cost-explorer-project.png) -->
+Cost Explorer grouped by the `Project` tag shows which stack each cent came from. Usage from before the tags were active, and anything AWS bills without a resource tag on it, shows up with no `Project` value.
+
+![Cost Explorer by Project tag](img/s34-cost-explorer-project.png)
 
 ## GitHub OIDC and the ephemeral check
 
@@ -396,41 +404,119 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 
 ## Testing the guardrails
 
-<!-- How to reproduce each denial and check yourself, and what the expected result looks like. -->
+Every guardrail in this project can be checked again at any time. Each check says which profile to use and what a working guardrail looks like. Run `aws sso login` first, and run the commands from the repo root.
+
+### Code matches AWS
+
+```bash
+export AWS_PROFILE=lab-admin
+for d in bootstrap stacks/org stacks/foundation; do
+  echo "== $d"
+  (cd "$d" && terraform plan -detailed-exitcode -input=false -no-color 2>&1 | grep -E "No changes|Plan:|Error"; echo "exit code: ${PIPESTATUS[0]}")
+done
+```
+
+Three `No changes.` lines and three `exit code: 0`. Exit code 2 means something drifted, and `terraform plan -refresh-only` in that stack shows what changed outside of Terraform.
+
+### Region lock
+
+```bash
+aws ec2 describe-vpcs --region eu-west-1 --profile lab-admin
+aws ec2 describe-vpcs --region us-west-2 --profile lab-admin --query 'length(Vpcs)'
+```
+
+The first fails with `UnauthorizedOperation` and an explicit deny in a service control policy. The second prints a number.
+
+### No new access keys in `lab`
+
+```bash
+aws iam create-user --user-name scp-key-test --profile lab-admin
+aws iam create-access-key --user-name scp-key-test --profile lab-admin
+aws iam delete-user --user-name scp-key-test --profile lab-admin
+```
+
+Creating the user works. Creating the key fails with `AccessDenied` and an explicit deny in a service control policy, even though `LabAdmin` has AdministratorAccess. The last command cleans up.
+
+### No access keys anywhere
+
+```bash
+aws iam generate-credential-report --profile lab-admin
+aws iam get-credential-report --profile lab-admin --query Content --output text | base64 -d | cut -d, -f1,9,14
+```
+
+Run both again with `--profile mgmt-admin` for the management account. If the first command says `STARTED`, run it again until it says `COMPLETE`. Columns 9 and 14 are whether each of a user's two access keys is active, so every row should end in `false,false`, root included.
+
+### `lab` has no root credentials
+
+In the management account, open IAM, Root access management. The `lab` row shows its root user credentials as not present.
+
+### State locking
+
+In `bootstrap`, run `terraform apply -replace=aws_s3_bucket_ownership_controls.state` in one terminal and leave it at the prompt. `terraform plan` in a second terminal fails with `Error acquiring the state lock`. Answer `no` in the first terminal to release it.
+
+### `prevent_destroy`
+
+```bash
+cd bootstrap
+terraform plan -destroy
+```
+
+The plan fails with `Instance cannot be destroyed`, and nothing can be applied. `org` fails the same way.
+
+### GitHub trust only from `main`
+
+Start the ephemeral check from the Actions tab on any branch other than `main`. The credentials step fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`. The same run on `main` goes green. The red test above shows the check catching an ephemeral resource.
 
 ## Decisions
 
-<!-- The main calls made in this project, linking to entries in ../decisions.md. -->
+Every choice, with what I passed on and why, is in [decisions.md](../decisions.md). These are the calls that shaped the project most:
+
+- **Three stacks split by account.** `org` runs against the management account, `bootstrap` and `foundation` against `lab`. No plan ever touches two accounts.
+- **Accounts created by hand, then imported with `prevent_destroy`.** Creating and closing accounts can't be undone, so the code describes them without being able to delete them.
+- **No long-lived credentials anywhere.** Identity Center for people, OIDC for GitHub, an SCP that blocks new IAM user keys in `lab`, and no root credentials in `lab`.
+- **Native S3 state locking** instead of a DynamoDB table, with partial backend config so the bucket name and the account ID in it stay out of the repo.
+- **SCPs as deny statements on the `Workloads` OU,** with the region-lock exemptions taken from the Control Tower controls reference instead of written from memory.
+- **The GitHub trust matches the exact subject,** in GitHub's immutable format, for `main` only, with `StringEquals` on both `aud` and `sub`.
+- **A failed workflow run is the ephemeral check's alert.** No SES or SNS, and nothing extra on the role.
+- **Daily and monthly budgets instead of zero-spend,** so an alert means something.
+- **Later stacks read `foundation`'s outputs and nothing else.** A missing value becomes a new output.
+- **Known gaps written down** with the project that closes each one, instead of building the production version of everything in project 1.
 
 ## What broke
+
+Rows with an issue number were tracked as bug issues. The rest were found and fixed in the same sitting.
 
 | Problem | Cause | Fix |
 |---|---|---|
 | The first import plan wanted to disable resource control policies for the whole organization | RCPs were enabled on the root, but `enabled_policy_types` only listed SCPs, and Terraform treats that list as the whole truth | Added `RESOURCE_CONTROL_POLICY` to the list before applying |
-| A plan on a second machine failed with a state lock error | An earlier interrupted `plan` from the same machine left its `.tflock` object behind | Confirmed no other run was active, then `terraform force-unlock` |
+| A plan on a second machine failed with a state lock error ([#10](https://github.com/Snowblind019/aws-platform/issues/10)) | An earlier interrupted `plan` from the same machine left its `.tflock` object behind | Confirmed no other run was active, then `terraform force-unlock` |
 | A plan on a second machine wanted to destroy and replace the `lab` account | That machine's `terraform.tfvars` had the `lab` email typed slightly differently, and a different email forces replacement | `prevent_destroy` stopped the plan. Copied the exact address from `aws organizations list-accounts` |
 | `terraform init` on a second machine failed with `InvalidClientTokenId` | `AWS_PROFILE` wasn't set, so the SDK fell back to the deleted IAM user's keys still sitting in that machine's `~/.aws/credentials` | Removed the old keys and exported `AWS_PROFILE=lab-admin` |
 | Cost Explorer denied `OrgAdmin` despite AdministratorAccess | IAM access to billing information was off in the management account | Root turned it on in the account settings |
 | Creating the red test's SSM parameter failed with `AccessDeniedException: No access to reserved parameter name` | The name started with `/aws-platform`. Parameter Store reserves every name that starts with `aws` or `ssm`, in any case, including the first level of a path. A delete using the old name failed the same way, so the renamed parameter was still there | Renamed it to `/snowblind019/ephemeral-check-test` and deleted it with that name |
-| `org` still held the import blocks and a tag policy file for a skipped stretch item, so its plan wanted to create a tag policy | The import file was redacted instead of deleted, and the tag policy file stayed after the stretch item was dropped. Nothing had run a plan in `org` since | Deleted both files, and the plan showed no changes |
+| `org` still held the import blocks and a tag policy file for a skipped stretch item, so its plan wanted to create a tag policy ([#11](https://github.com/Snowblind019/aws-platform/issues/11)) | The import file was redacted instead of deleted, and the tag policy file stayed after the stretch item was dropped. Nothing had run a plan in `org` since | Deleted both files, and the plan showed no changes |
 | `terraform plan` failed with `fork/exec ... terraform-provider-aws ...: permission denied` on the work PC, in two stacks | The downloaded provider binary in the local `.terraform` folder had lost its execute permission, and `terraform init` reused it | Deleted `.terraform` and ran `init` again for a fresh download |
 | The three stacks ran three different AWS provider versions across the two machines | The `.terraform.lock.hcl` files were never committed, so each machine picked its own version | Upgraded all three stacks to the same version and committed the lock files |
 
 ## Known gaps
 
-<!-- Phase 8 finishes this list: what a production setup would do differently, and which later project closes each one. -->
+Each of these is a real answer to "what would you do differently in production," and most of them are closed by a later project.
 
-- **No dedicated log archive account.** The CloudTrail bucket lives in the management account. A real organization keeps logs in their own account.
-- **The trail's log bucket has no versioning or Object Lock.** Log file validation can prove a log file was changed or deleted, but it doesn't stop someone with admin in the management account from deleting it.
+- **No dedicated log archive or security tooling accounts.** The CloudTrail bucket lives in the management account, and a real organization keeps logs and security tooling in accounts of their own. Two accounts is the smallest layout that still shows SCPs, cross-account access, and org-level services.
+- **State lives in `lab`, the account the pipeline will deploy into.** A real setup keeps state in a separate tooling account, out of reach of the deploy roles. It also puts `org`'s state in the account its own SCPs govern: a bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. Revisit in projects 3 and 5.
+- **Permission sets use AWS managed AdministratorAccess, and Identity Center isn't in Terraform yet.** Project 5 scopes them down and imports them.
+- **`OrganizationAccountAccessRole` is still in `lab`.** It's kept as break-glass. Projects 5 and 8 decide whether it stays.
+- **No customer managed KMS key.** State, trail logs, and EBS volumes use AWS owned or AWS managed keys. One gets added to `foundation` when the first stack needs it, likely project 4 or 6.
 - **Trail logs use SSE-S3, not KMS.** Project 8's Security Hub scan will flag it.
-- **The `org` stack's state lives in `lab`, the account its own SCPs govern.** A bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. A separate tooling account for state would remove this. Revisit in projects 3 and 5.
+- **The trail's log bucket has no versioning or Object Lock.** Log file validation can prove a log file was changed or deleted, but it doesn't stop someone with admin in the management account from deleting it.
+- **AWS Config, GuardDuty, and Security Hub are off.** Project 8.
 - **`region-lock` exemptions apply in every region.** Anything on the `NotAction` list, like `kms:*`, still works in regions the policy otherwise denies.
 - **IMDSv2 is the default, not enforced.** An SCP condition on `ec2:MetadataHttpTokens` or an EC2 declarative policy would enforce it. Project 8.
 - **`AWS_ALLOWED_REGIONS` in GitHub is a hand copy of `org`'s list.** If the list changes, the variable has to change with it.
 - **The remote state read gives `foundation` all of `org`'s state.** That includes the two email addresses in plain text. Fine while one principal can read the whole bucket anyway. With separate teams, shared values would go somewhere narrower, like SSM Parameter Store.
 - **The ephemeral check turns itself off after 60 quiet days.** GitHub disables scheduled workflows in public repos when nothing happens in the repo for 60 days, so a long break stops the check without any warning.
 - **The ephemeral check only sees what it looks for.** It counts resources tagged `Ephemeral=true`, NAT gateways, and Elastic IPs. Something made by hand without tags, like an EC2 instance, wouldn't show up. Later projects add a direct check, and the read permission for it, for anything else that bills while untagged.
-- **The tagging API lags behind deletes.** After the red test, the deleted parameter stayed in `tag:GetResources` results for LAG-TODO. A check run right after a `terraform destroy` can go red for something that's already gone.
+- **The tagging API can lag behind deletes.** AWS doesn't say how fast a deleted resource drops out of `tag:GetResources` results, and other people have seen them listed for hours. In the red test the deleted parameter was gone by the next run, but a check right after a `terraform destroy` could still go red for something that's already gone. A direct describe call on the resource settles it.
 - **Drift is only caught when someone runs `plan`.** Nothing runs it on a schedule yet. Project 3's pipeline can run `plan -detailed-exitcode` on a schedule and fail on exit code 2.
 
 ## Cost
@@ -438,8 +524,8 @@ Later stacks read `foundation` only, never `org`, and only through its outputs. 
 | Item | Amount |
 |---|---|
 | Baseline before the project | $0.00 month to date on 09-26-2026 ($0.02 for all of August 2026) |
-| Standing monthly cost | |
-| Actual spend during the project | |
+| Standing monthly cost | About $0.15. Nearly all of it is S3 for the `org` stack's CloudTrail log bucket, since every log file the trail delivers is a request. The state bucket rounds to $0.00. These have no charge: Organizations, SCPs, Identity Center, IAM and the OIDC provider, the first copy of management events in CloudTrail, budgets without actions, and Cost Anomaly Detection |
+| Actual spend during the project | $0.11 from 09-25-2026 to 10-21-2026: $0.10 for `org`, $0.01 with no `Project` tag, and $0.00 for `bootstrap` (S34) |
 
 ## Tested with
 
