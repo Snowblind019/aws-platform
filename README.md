@@ -91,7 +91,7 @@ Part of this is console work on purpose. The organization and its accounts are o
 | Tool | Version |
 |---|---|
 | Terraform | v1.16.4 |
-| AWS provider | 6.66.0 |
+| AWS provider | 6.69.1 |
 | AWS CLI | 2.37.4 |
 
 Each stack's `.terraform.lock.hcl` pins the exact provider build.

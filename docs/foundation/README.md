@@ -497,6 +497,7 @@ Rows with an issue number were tracked as bug issues. The rest were found and fi
 | `org` still held the import blocks and a tag policy file for a skipped stretch item, so its plan wanted to create a tag policy ([#11](https://github.com/Snowblind019/aws-platform/issues/11)) | The import file was redacted instead of deleted, and the tag policy file stayed after the stretch item was dropped. Nothing had run a plan in `org` since | Deleted both files, and the plan showed no changes |
 | `terraform plan` failed with `fork/exec ... terraform-provider-aws ...: permission denied` on the work PC, in two stacks | The downloaded provider binary in the local `.terraform` folder had lost its execute permission, and `terraform init` reused it | Deleted `.terraform` and ran `init` again for a fresh download |
 | The three stacks ran three different AWS provider versions across the two machines | The `.terraform.lock.hcl` files were never committed, so each machine picked its own version | Upgraded all three stacks to the same version and committed the lock files |
+| The lock files the row above says were committed never reached the repo ([#12](https://github.com/Snowblind019/aws-platform/issues/12)) | They were never staged. Nothing ignored them, and the commit went in without them because I didn't read `git status` first | Committed them at the start of project 2, pinning 6.69.1, and corrected Tested with to match. Every commit now starts with reading `git status` |
 
 ## Known gaps
 
@@ -532,5 +533,5 @@ Each of these is a real answer to "what would you do differently in production,"
 | Tool | Version |
 |---|---|
 | Terraform | v1.16.4 |
-| AWS provider | 6.66.0 |
+| AWS provider | 6.69.1 |
 | AWS CLI | 2.37.4 |
