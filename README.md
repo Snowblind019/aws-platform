@@ -1,6 +1,6 @@
 # aws-platform
 
-![Status](https://img.shields.io/badge/Status-Project%201%20of%2010%20in%20progress-yellow)
+![Status](https://img.shields.io/badge/Status-Project%201%20of%2010%20done-brightgreen)
 ![Cloud](https://img.shields.io/badge/Cloud-AWS-FF9900)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF)
@@ -12,7 +12,7 @@ A multi-account AWS platform I'm building with Terraform, one project at a time.
 
 | # | Project | What it adds | Status |
 |---|---|---|---|
-| 1 | [AWS foundation](docs/foundation/README.md) | Organization and accounts, Identity Center access, state backend with locking, SCPs, org CloudTrail, budgets and tagging, GitHub OIDC trust | In progress |
+| 1 | [AWS foundation](docs/foundation/README.md) | Organization and accounts, Identity Center access, state backend with locking, SCPs, org CloudTrail, budgets and tagging, GitHub OIDC trust | Done |
 | 2 | Multi-VPC network | Transit Gateway, Network Firewall, centralized egress | Planned |
 | 3 | CI/CD pipeline | GitHub Actions deploying the stacks through OIDC federation | Planned |
 | 4 | Container service | A containerized service on ECS Fargate, shipped through the pipeline | Planned |
@@ -23,7 +23,7 @@ A multi-account AWS platform I'm building with Terraform, one project at a time.
 | 9 | Kubernetes | k3s at home, then EKS | Planned |
 | 10 | Reliability and DR | Snapshot and failover automation, and a failover drill to a second region | Planned |
 
-Progress on the current project: [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1)
+Project 1 is done. Its phase issues and bug issues are in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
 
 The conventions every stack follows, and every choice made along the way, are in [docs/decisions.md](docs/decisions.md).
 
@@ -34,7 +34,68 @@ Each project gets a GitHub milestone with one issue per phase of the build. Anyt
 
 </details>
 
-<!-- Phase 8: stack table (name, account, purpose, persistent or ephemeral, status) -->
-<!-- Phase 8: the one-direction dependency rule -->
-<!-- Phase 8: how to stand it up from zero, in order (good fit for a collapsed <details> block) -->
-<!-- Phase 8: tested-with versions and standing monthly cost -->
+## Stacks
+
+| Stack | Account | Purpose | Lifecycle | Status |
+|---|---|---|---|---|
+| [`bootstrap`](bootstrap/) | lab | The S3 bucket every stack keeps its state in | Persistent | Applied |
+| [`org`](stacks/org/) | management | The organization and the `lab` account, SCPs, the organization CloudTrail trail, budgets, anomaly detection, and cost allocation tags | Persistent | Applied |
+| [`foundation`](stacks/foundation/) | lab | Account defaults, the GitHub OIDC provider, and the read-only role the ephemeral check uses | Persistent | Applied |
+| [`modules/tags`](modules/tags/) | n/a | The four standard tags every stack passes into `default_tags` | n/a | In use |
+
+Persistent stacks stay up between projects. Ephemeral stacks, starting with project 2, get applied for a work session and destroyed after it. The [ephemeral check](.github/workflows/ephemeral-check.yml) runs every day and fails if anything tagged `Ephemeral=true`, or any NAT gateway or Elastic IP, is still running in `lab`.
+
+## Dependencies point one way
+
+A stack can read an earlier stack's outputs through `terraform_remote_state`. An earlier stack never reads a later one.
+
+```
+org  -->  foundation  -->  every later stack
+```
+
+`bootstrap` sits under all of them as the state backend. Later stacks read `foundation` only, never `org`, and only through its outputs. If a later stack needs something that isn't there, it becomes a new output. So any project's stacks can be destroyed without breaking the layer under them, and everything one layer shares with the next is in one `outputs.tf`.
+
+## Building it from zero
+
+<details>
+<summary><b>Steps, in order</b></summary>
+
+Part of this is console work on purpose. The organization and its accounts are one-way doors, and human access has to exist before Terraform can run. Everything after that is code.
+
+**Console, in the management account**
+
+1. Root user: MFA with two devices, no access keys, and alternate contacts set. Turn on IAM access to billing information in the account settings.
+2. Create the organization with all features. Then turn on centralized root access in IAM: root credentials management and privileged root actions.
+3. Create the `Workloads` OU. Create `lab` from Organizations with a plus-address email and the default `OrganizationAccountAccessRole`, and move it into `Workloads`. Because centralized root access is already on, `lab` is created with no root credentials.
+4. Enable the SCP policy type and leave `FullAWSAccess` attached.
+5. Enable IAM Identity Center as the organization instance in `us-west-2`. Require MFA at every sign-in, create the `platform-admins` group with your user in it, and create the `OrgAdmin`, `LabAdmin`, and `LabReadOnly` permission sets, assigned to the group.
+
+**Workstation**
+
+6. `aws configure sso`: one SSO session with three profiles, `mgmt-admin`, `lab-admin`, and `lab-readonly`. Then `aws sso login`.
+
+**Terraform**, with `AWS_PROFILE=lab-admin` throughout
+
+7. `bootstrap`, on local state first: rename `backend.tf` to `backend.tf.off`, then `terraform init` and `terraform apply`. Copy `backend.hcl.example` to `backend.hcl` at the repo root and fill in the bucket name from the output. Rename `backend.tf.off` back and run `terraform init -migrate-state -backend-config=../backend.hcl`. Once a plan shows no changes, delete the local state files.
+8. `org`: copy `terraform.tfvars.example` to `terraform.tfvars` and fill in both emails. Add `import` blocks for the organization, the `Workloads` OU, and `lab`, with their IDs from `aws organizations describe-organization`, `list-roots`, `list-organizational-units-for-parent`, and `list-accounts` run as `mgmt-admin`. Run `terraform init -backend-config=../../backend.hcl` and plan until it shows the three imports and nothing being replaced or destroyed. Apply, then delete the import blocks. The provider reaches the management account through `mgmt-admin` on its own. If a cost allocation tag fails because the key doesn't exist yet, billing hasn't seen the tags on the `bootstrap` bucket, which can take up to a day. Apply again then.
+9. `foundation`: `terraform init -backend-config=../../backend.hcl`, then apply. For a repo other than `Snowblind019/aws-platform`, first change `github_sub_prefix` in `github-oidc.tf` to that repo's owner and repo IDs, from `https://api.github.com/repos/<owner>/<repo>`.
+
+**GitHub**
+
+10. Add the repository secret `AWS_EPHEMERAL_CHECK_ROLE_ARN`, set to the output of `aws iam get-role --role-name gha-ephemeral-check --query Role.Arn --output text`. Add the repository variables `AWS_REGION` set to `us-west-2` and `AWS_ALLOWED_REGIONS` set to `us-west-2 us-east-1`. Run the ephemeral check from the Actions tab. It should go green.
+
+</details>
+
+## Tested with
+
+| Tool | Version |
+|---|---|
+| Terraform | v1.16.4 |
+| AWS provider | 6.66.0 |
+| AWS CLI | 2.37.4 |
+
+Each stack's `.terraform.lock.hcl` pins the exact provider build.
+
+## Standing cost
+
+The persistent layer costs about $0.15 a month, almost all of it S3 for the CloudTrail log bucket. The breakdown is in [project 1's cost section](docs/foundation/README.md#cost).
