@@ -66,7 +66,7 @@ Access is assigned to a `platform-admins` group, not to my user directly, throug
 | LabAdmin | AdministratorAccess | 4 hours | `lab` | Terraform work on every other stack |
 | LabReadOnly | ReadOnlyAccess | 8 hours | `lab` | Looking around without write access |
 
-AdministratorAccess is on purpose for now. Least privilege needs something built to be least-privileged against, so project 5 replaces OrgAdmin and LabAdmin with scoped custom permission sets and brings all of this into Terraform. Because access hangs off the group, that change is a matter of changing group assignments, with nothing to rewire per user.
+AdministratorAccess is on purpose for now. Least privilege needs something built to be least-privileged against, so the next step is replacing OrgAdmin and LabAdmin with scoped custom permission sets and bringing all of this into Terraform. Because access hangs off the group, that change is a matter of changing group assignments, with nothing to rewire per user.
 
 ![Permission sets assigned to platform-admins in lab](img/s06a-lab-assignments.png)
 
@@ -190,7 +190,7 @@ From `LabAdmin`, which has AdministratorAccess, creating an IAM user works, and 
 
 ### Organization CloudTrail
 
-One organization trail, `org-trail`, records management events from every account in the organization, in every region. It was created in the management account, with `us-west-2` as its home region. It includes global service events, has log file validation on, records both read and write management events, and records no data events, which are billed per event and nothing here needs yet. It started in project 1 because project 5 generates least-privilege policies from CloudTrail history, and the earlier it starts recording, the more history there is.
+One organization trail, `org-trail`, records management events from every account in the organization, in every region. It was created in the management account, with `us-west-2` as its home region. It includes global service events, has log file validation on, records both read and write management events, and records no data events, which are billed per event and nothing here needs yet. It started in project 1 because least-privilege policies can be generated from CloudTrail history, and the earlier it starts recording, the more history there is.
 
 Logs land in an S3 bucket in the management account named `<prefix>-org-trail-<account-id>`, under `AWSLogs/<org-id>/<account-id>/CloudTrail/<region>/`. In a real organization this bucket would be in a dedicated log archive account. The bucket gets the same hardening as the state bucket: SSE-S3, all four public access block settings, bucket owner enforced, and a TLS-only deny. It has no versioning. A lifecycle rule expires log objects after 365 days.
 
@@ -206,7 +206,7 @@ A trail only delivers events that happen after it exists. To test it, a few call
 
 ### Account defaults
 
-The `foundation` stack sets three account-level defaults in `lab`. None of them cost anything, and each one closes a finding the posture scan in project 8 would otherwise report.
+The `foundation` stack sets three account-level defaults in `lab`. None of them cost anything, and each one closes a finding a posture scan like Security Hub would otherwise report.
 
 | Setting | Scope | What it does |
 |---|---|---|
@@ -265,7 +265,7 @@ Cost Explorer grouped by the `Project` tag shows which stack each cent came from
 
 GitHub Actions gets into `lab` through OIDC, with no stored keys. Each workflow run asks GitHub for a signed token that says which repo and branch it came from. AWS checks the token against the IAM OIDC provider for `token.actions.githubusercontent.com`, then the role's trust policy, and hands back credentials that last at most one hour.
 
-The provider accepts the audience `sts.amazonaws.com` and has no thumbprint. For GitHub, AWS checks the certificate against its own trusted CAs and ignores thumbprints, and a thumbprint set and later removed doesn't get cleared. There's one provider per URL per account, so the deploy roles in project 3 will reuse this one. Its ARN is a stack output for that reason.
+The provider accepts the audience `sts.amazonaws.com` and has no thumbprint. For GitHub, AWS checks the certificate against its own trusted CAs and ignores thumbprints, and a thumbprint set and later removed doesn't get cleared. There's one provider per URL per account, so any deploy roles added later reuse this one. Its ARN is a stack output for that reason.
 
 ![GitHub OIDC provider](img/s25-github-oidc-provider.png)
 
@@ -374,7 +374,7 @@ Plan shows what changed, and CloudTrail shows who. Both `PutRolePolicy` calls, m
 
 ![The console change and the revert in CloudTrail](img/s32c-drift-cloudtrail.png)
 
-Plan only checks resources that are already in state. A resource someone creates by hand, outside every stack, never shows up in any plan. That's what the ephemeral check, and AWS Config in project 8, are for.
+Plan only checks resources that are already in state. A resource someone creates by hand, outside every stack, never shows up in any plan. That's what the ephemeral check, and AWS Config later, are for.
 
 Then `foundation` was destroyed and built again from code: the three account defaults, the OIDC provider, and the role, 8 resources in all. The destroy took about 16 seconds, most of it the S3 account public access block, and the apply took about 2. The role and the provider have fixed names, so their ARNs came back the same, the outputs matched the ones saved before the destroy, and the ephemeral check went green on the rebuilt role with nothing changed on GitHub. The account defaults were checked directly in both regions after the apply instead of trusting the apply output.
 
@@ -397,7 +397,7 @@ A rebuilt role has the same name and ARN but a new internal ID. Bucket and key p
 | `lab_account_id` (`org`) | Account ID of the `lab` member account | Reference |
 | `trail_bucket_name` (`org`) | The S3 bucket holding the organization CloudTrail logs | Finding the logs |
 | `allowed_regions` (`foundation`) | The same regions, passed through from `org` | Every later regional stack |
-| `github_oidc_provider_arn` (`foundation`) | ARN of the GitHub OIDC provider in `lab` | Project 3's deploy roles |
+| `github_oidc_provider_arn` (`foundation`) | ARN of the GitHub OIDC provider in `lab` | Later deploy roles |
 | `lab_account_id` (`foundation`) | The `lab` account's ID, from the account the stack runs in | Stacks that build ARNs or bucket names |
 
 Later stacks read `foundation` only, never `org`, and only through its outputs. If a later stack needs something that isn't here, it becomes a new output instead of a data source lookup.
@@ -480,7 +480,7 @@ Every choice, with what I passed on and why, is in [decisions.md](../decisions.m
 - **A failed workflow run is the ephemeral check's alert.** No SES or SNS, and nothing extra on the role.
 - **Daily and monthly budgets instead of zero-spend,** so an alert means something.
 - **Later stacks read `foundation`'s outputs and nothing else.** A missing value becomes a new output.
-- **Known gaps written down** with the project that closes each one, instead of building the production version of everything in project 1.
+- **Known gaps written down** with the next step for each one, instead of building the production version of everything in project 1.
 
 ## What broke
 
@@ -501,24 +501,24 @@ Rows with an issue number were tracked as bug issues. The rest were found and fi
 
 ## Known gaps
 
-Each of these is a real answer to "what would you do differently in production," and most of them are closed by a later project.
+Each of these is a real answer to "what would you do differently in production," and most of them are work for later.
 
 - **No dedicated log archive or security tooling accounts.** The CloudTrail bucket lives in the management account, and a real organization keeps logs and security tooling in accounts of their own. Two accounts is the smallest layout that still shows SCPs, cross-account access, and org-level services.
-- **State lives in `lab`, the account the pipeline will deploy into.** A real setup keeps state in a separate tooling account, out of reach of the deploy roles. It also puts `org`'s state in the account its own SCPs govern: a bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. Revisit in projects 3 and 5.
-- **Permission sets use AWS managed AdministratorAccess, and Identity Center isn't in Terraform yet.** Project 5 scopes them down and imports them.
-- **`OrganizationAccountAccessRole` is still in `lab`.** It's kept as break-glass. Projects 5 and 8 decide whether it stays.
-- **No customer managed KMS key.** State, trail logs, and EBS volumes use AWS owned or AWS managed keys. One gets added to `foundation` when the first stack needs it, likely project 4 or 6.
-- **Trail logs use SSE-S3, not KMS.** Project 8's Security Hub scan will flag it.
+- **State lives in `lab`, the account the pipeline will deploy into.** A real setup keeps state in a separate tooling account, out of reach of the deploy roles. It also puts `org`'s state in the account its own SCPs govern: a bad `region-lock` could block Terraform from the state it would need to fix it, and the way back is a manual detach in the console. Next step: revisit with the CI/CD pipeline and the IAM scoping work.
+- **Permission sets use AWS managed AdministratorAccess, and Identity Center isn't in Terraform yet.** Next step: import them, then tighten them from CloudTrail with IAM Access Analyzer.
+- **`OrganizationAccountAccessRole` is still in `lab`.** It's kept as break-glass. Next step: decide whether it stays once human access is scoped down.
+- **No customer managed KMS key.** State, trail logs, and EBS volumes use AWS owned or AWS managed keys. One gets added to `foundation` when the first stack needs it.
+- **Trail logs use SSE-S3, not KMS.** A Security Hub scan would flag it. Next step: switch to SSE-KMS once `foundation` has a customer managed key.
 - **The trail's log bucket has no versioning or Object Lock.** Log file validation can prove a log file was changed or deleted, but it doesn't stop someone with admin in the management account from deleting it.
-- **AWS Config, GuardDuty, and Security Hub are off.** Project 8.
+- **AWS Config, GuardDuty, and Security Hub are off.** Next step: turn them on and scan what's been built.
 - **`region-lock` exemptions apply in every region.** Anything on the `NotAction` list, like `kms:*`, still works in regions the policy otherwise denies.
-- **IMDSv2 is the default, not enforced.** An SCP condition on `ec2:MetadataHttpTokens` or an EC2 declarative policy would enforce it. Project 8.
+- **IMDSv2 is the default, not enforced.** An SCP condition on `ec2:MetadataHttpTokens` or an EC2 declarative policy would enforce it. Next step: add one of those.
 - **`AWS_ALLOWED_REGIONS` in GitHub is a hand copy of `org`'s list.** If the list changes, the variable has to change with it.
 - **The remote state read gives `foundation` all of `org`'s state.** That includes the two email addresses in plain text. Fine while one principal can read the whole bucket anyway. With separate teams, shared values would go somewhere narrower, like SSM Parameter Store.
 - **The ephemeral check turns itself off after 60 quiet days.** GitHub disables scheduled workflows in public repos when nothing happens in the repo for 60 days, so a long break stops the check without any warning.
 - **The ephemeral check only sees what it looks for.** It counts resources tagged `Ephemeral=true`, NAT gateways, and Elastic IPs. Something made by hand without tags, like an EC2 instance, wouldn't show up. Later projects add a direct check, and the read permission for it, for anything else that bills while untagged.
 - **The tagging API can lag behind deletes.** AWS doesn't say how fast a deleted resource drops out of `tag:GetResources` results, and other people have seen them listed for hours. In the red test the deleted parameter was gone by the next run, but a check right after a `terraform destroy` could still go red for something that's already gone. A direct describe call on the resource settles it.
-- **Drift is only caught when someone runs `plan`.** Nothing runs it on a schedule yet. Project 3's pipeline can run `plan -detailed-exitcode` on a schedule and fail on exit code 2.
+- **Drift is only caught when someone runs `plan`.** Nothing runs it on a schedule yet. Next step: a pipeline that runs `plan -detailed-exitcode` on a schedule and fails on exit code 2.
 
 ## Cost
 

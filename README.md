@@ -1,6 +1,5 @@
 # aws-platform
 
-![Status](https://img.shields.io/badge/Status-Project%201%20of%2010%20done-brightgreen)
 ![Cloud](https://img.shields.io/badge/Cloud-AWS-FF9900)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF)
@@ -8,22 +7,11 @@
 
 A multi-account AWS platform I'm building with Terraform, one project at a time. It starts with a foundation layer: an AWS Organization with a management account and a `lab` account, human access through IAM Identity Center, a shared S3 state backend, org-wide guardrails, and GitHub OIDC trust. Each project after that adds its own stack on top. Every stack has its own state file and can be applied and destroyed on its own, so a project gets built, documented, and torn down, and can be rebuilt from code when a later project needs it.
 
-## Roadmap
+## What's built
 
-| # | Project | What it adds | Status |
-|---|---|---|---|
-| 1 | [AWS foundation](docs/foundation/README.md) | Organization and accounts, Identity Center access, state backend with locking, SCPs, org CloudTrail, budgets and tagging, GitHub OIDC trust | Done |
-| 2 | Multi-VPC network | Transit Gateway, Network Firewall, centralized egress | Planned |
-| 3 | CI/CD pipeline | GitHub Actions deploying the stacks through OIDC federation | Planned |
-| 4 | Container service | A containerized service on ECS Fargate, shipped through the pipeline | Planned |
-| 5 | IAM depth | Least-privilege roles and permission sets for everything built so far | Planned |
-| 6 | Secrets management | Secrets Manager and Parameter Store with rotation, wired into the Fargate tasks | Planned |
-| 7 | Observability and auto-remediation | Monitoring and alerting, with remediation Lambdas | Planned |
-| 8 | Posture and compliance | Security Hub, GuardDuty, Config, and Prowler scans of what projects 1 to 7 built | Planned |
-| 9 | Kubernetes | k3s at home, then EKS | Planned |
-| 10 | Reliability and DR | Snapshot and failover automation, and a failover drill to a second region | Planned |
+- **Project 1: [AWS foundation](docs/foundation/README.md).** The organization and its accounts, Identity Center access, a state backend with locking, SCPs, an organization CloudTrail trail, budgets and tagging, and GitHub OIDC trust. Its phase issues and bug issues are in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
 
-Project 1 is done. Its phase issues and bug issues are in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
+Now building: project 2, a multi-VPC network.
 
 The conventions every stack follows, and every choice made along the way, are in [docs/decisions.md](docs/decisions.md).
 
