@@ -2,16 +2,18 @@
 
 ![Cloud](https://img.shields.io/badge/Cloud-AWS-FF9900)
 ![IaC](https://img.shields.io/badge/IaC-Terraform-7B42BC)
+![IaC](https://img.shields.io/badge/IaC-CloudFormation-FF4F8B)
 ![CI](https://img.shields.io/badge/CI-GitHub%20Actions-2088FF)
 ![Method](https://img.shields.io/badge/Method-Build%2C%20destroy%2C%20rebuild-4479A1)
 
-A multi-account AWS platform I'm building with Terraform, one project at a time. It starts with a foundation layer: an AWS Organization with a management account and a `lab` account, human access through IAM Identity Center, a shared S3 state backend, org-wide guardrails, and GitHub OIDC trust. Each project after that adds its own stack on top. Every stack has its own state file and can be applied and destroyed on its own, so a project gets built, documented, and torn down, and can be rebuilt from code when a later project needs it.
+
+A multi-account AWS platform I'm building with Terraform and CloudFormation, one project at a time.It starts with a foundation layer: an AWS Organization with a management account and a `lab` account, human access through IAM Identity Center, a shared S3 state backend, org-wide guardrails, and GitHub OIDC trust. Each project after that adds its own stack on top. Every stack has its own state file and can be applied and destroyed on its own, so a project gets built, documented, and torn down, and can be rebuilt from code when a later project needs it.
 
 ## What's built
 
 - **Project 1: [AWS foundation](docs/foundation/README.md).** The organization and its accounts, Identity Center access, a state backend with locking, SCPs, an organization CloudTrail trail, budgets and tagging, and GitHub OIDC trust. Its phase issues and bug issues are in the [Project 1 milestone](https://github.com/Snowblind019/aws-platform/milestone/1).
 
-Now building: project 2, a multi-VPC network.
+Now building: [project 2, a multi-VPC network](docs/network/README.md), in CloudFormation. Progress is in the [Project 2 milestone](https://github.com/Snowblind019/aws-platform/milestone/2).
 
 The conventions every stack follows, and every choice made along the way, are in [docs/decisions.md](docs/decisions.md).
 
